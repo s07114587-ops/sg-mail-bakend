@@ -1,110 +1,139 @@
 import imaplib
+import smtplib
 import email
+import os
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
 
-# FastAPI ইনিশিয়ালাইজেশন
-app = FastAPI(title="🔥 Ultimate Mail Automation Backend 🔥")
+app = FastAPI(title="🔥 SGDEV Mail Automation 🔥")
 
-# IMAP কনফিগারেশন (তোর আসল ইমেইল এবং অ্যাপ পাসওয়ার্ড এখানে দিবি)
-IMAP_SERVER = "imap.gmail.com" # জিমেইলের জন্য
-EMAIL_ACCOUNT = "your_email@gmail.com"
-EMAIL_PASSWORD = "your_app_password"
+# তোর মেইল কনফিগারেশন
+EMAIL = "sgdev@netc.fr"
+PASSWORD = os.getenv('MAILO_PASSWORD') # Render-এর Environment Variable থেকে পাসওয়ার্ড নেবে
+IMAP_SERVER = "mail.mailo.com"
+SMTP_SERVER = "mail.mailo.com"
 
-# গ্লোবাল মেমোরি
+# গ্লোবাল মেমোরি (ব্রাউজারে ডেটা দেখানোর জন্য)
 latest_email_status = {
-    "status": "Waiting for cron-job to trigger...",
+    "status": "Waiting for cron-job to check inbox...",
     "sender": "N/A",
     "body": "N/A",
     "timestamp": "N/A"
 }
 
-# ইনবক্স চেক করার ফাংশন
-def fetch_latest_email():
+def send_reply(to_email, original_subject):
+    """অটোমেটিক রিপ্লাই পাঠানোর ফাংশন (No Watermark!)"""
+    try:
+        msg = email.message.EmailMessage()
+        msg.set_content("Hi! I received your mail. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)")
+        
+        # সাবজেক্ট যদি খালি থাকে তবে একটা ডিফল্ট সাবজেক্ট দেবে
+        safe_subject = original_subject if original_subject else "Your Mail"
+        msg['Subject'] = f"Re: {safe_subject}"
+        msg['From'] = EMAIL
+        msg['To'] = to_email
+
+        with smtplib.SMTP_SSL(SMTP_SERVER, 465) as smtp:
+            smtp.login(EMAIL, PASSWORD)
+            smtp.send_message(msg)
+        print(f"Reply sent successfully to {to_email}")
+    except Exception as e:
+        print(f"Error sending reply: {e}")
+
+@app.get("/run")
+def check_and_reply_inbox():
+    """এই লিঙ্কটাই cron-job.org প্রতি ১ মিনিট পর পর হিট করবে"""
     global latest_email_status
     try:
-        # IMAP সার্ভারে লগিন
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(EMAIL_ACCOUNT, EMAIL_PASSWORD)
+        mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
 
-        # সব মেইল সার্চ করা (সবচেয়ে নতুনটা শেষে থাকে)
-        status, messages = mail.search(None, 'ALL')
-        if status == "OK":
-            mail_ids = messages[0].split()
-            if mail_ids:
-                latest_id = mail_ids[-1] # একদম শেষের (নতুন) মেইলটার আইডি
-                
-                # মেইল ডেটা ফেচ করা
-                res, msg_data = mail.fetch(latest_id, '(RFC822)')
-                for response_part in msg_data:
-                    if isinstance(response_part, tuple):
-                        raw_email = email.message_from_bytes(response_part[1])
-                        
-                        sender = raw_email.get("From", "Unknown Sender")
-                        
-                        # তোর সেই "Huge Brain" ক্র্যাশ-প্রুফ বডি পার্সিং লজিক
-                        body = ""
-                        if raw_email.is_multipart():
-                            for part in raw_email.walk():
-                                if part.get_content_type() == "text/plain":
-                                    payload = part.get_payload(decode=True)
-                                    if payload:
-                                        body = payload.decode('utf-8', errors='ignore')
-                                        break
-                        else:
-                            payload = raw_email.get_payload(decode=True)
-                            if payload:
-                                body = payload.decode('utf-8', errors='ignore')
+        # আনরিড মেইল খুঁজছে
+        _, messages = mail.search(None, 'UNSEEN')
+        
+        if not messages[0]:
+            print("Cron-job pinged: No new messages found.")
+            mail.logout()
+            return {"status": "Success", "message": "Checked inbox. No new emails."}
 
-                        # NoneType এরর চিরতরে শেষ
-                        body = str(body) if body is not None else ""
-                        cleaned_body = body.replace('\r\n', '\n').strip()
+        # মেইল পেলে প্রসেস করবে
+        for num in messages[0].split():
+            _, msg_data = mail.fetch(num, '(RFC822)')
+            raw_email = email.message_from_bytes(msg_data[0][1])
+            subject = raw_email.get('Subject', 'No Subject')
+            sender = raw_email.get("From", "Unknown Sender")
+            
+            # সেফ বডি এক্সট্রাকশন (তোর আগের ফিক্স করা লজিক)
+            body = ""
+            if raw_email.is_multipart():
+                for part in raw_email.walk():
+                    if part.get_content_type() == "text/plain":
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            body = payload.decode('utf-8', errors='ignore')
+                            break
+            else:
+                payload = raw_email.get_payload(decode=True)
+                if payload:
+                    body = payload.decode('utf-8', errors='ignore')
 
-                        # মেমোরিতে ডাটা আপডেট
-                        latest_email_status = {
-                            "status": "🔥 Inbox Checked & Automation Successful! 🔥",
-                            "sender": sender,
-                            "body": cleaned_body if cleaned_body else "(No text content found in body)",
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-                        }
+            # স্ট্রিং কনভার্সন গ্যারান্টি
+            body = str(body) if body is not None else ""
+            cleaned_body = body.replace('\r\n', '\n').strip()
+
+            print(f"New Mail from {sender}: {cleaned_body[:50]}")
+
+            # রিপ্লাই পাঠানো
+            send_reply(sender, subject)
+            
+            # মেইলটাকে "Read" মার্ক করা
+            mail.store(num, '+FLAGS', '\\Seen')
+
+            # ড্যাশবোর্ডের জন্য ডেটা আপডেট করা
+            latest_email_status = {
+                "status": "🔥 New Mail Processed & Replied! 🔥",
+                "sender": sender,
+                "body": cleaned_body if cleaned_body else "(No text content found)",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+            }
+        
         mail.logout()
-    except Exception as e:
-        # ক্র্যাশ না করে ড্যাশবোর্ডে এরর দেখাবে
-        latest_email_status["status"] = f"IMAP Error: {str(e)}"
-        latest_email_status["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+        return {"status": "Success", "message": "Emails processed and replied!"}
 
-# GET রিকোয়েস্ট (ব্রাউজার বা Cron-job থেকে আসলে)
-@app.get("/run", response_class=HTMLResponse)
-async def view_dashboard_and_trigger():
-    # ১. প্রথমে মেইল চেক করবে
-    fetch_latest_email()
-    
-    # ২. তারপর আপডেটেড ড্যাশবোর্ড দেখাবে
+    except Exception as e:
+        print(f"Error checking inbox: {e}")
+        return {"status": "Error", "detail": str(e)}
+
+@app.get("/", response_class=HTMLResponse)
+async def view_dashboard():
+    """তোর মেইন ড্যাশবোর্ড (ব্রাউজারে দেখার জন্য)"""
     html_content = f"""
     <html>
         <head>
-            <title>Mail Automation Status</title>
+            <title>SGDEV Mail Automation</title>
             <style>
-                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0d1117; color: #c9d1d9; padding: 40px; }}
-                .container {{ max-width: 750px; margin: auto; background: #161b22; padding: 30px; border-radius: 12px; border: 1px solid #30363d; box-shadow: 0 8px 24px rgba(0,0,0,0.5); }}
-                h1 {{ color: #58a6ff; border-bottom: 2px solid #21262d; padding-bottom: 10px; margin-top: 0; }}
-                .status-badge {{ display: inline-block; padding: 6px 12px; border-radius: 6px; background: #238636; color: white; font-weight: bold; font-size: 0.9em; }}
+                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0a0a12; color: #c9d1d9; padding: 40px; text-align: center; }}
+                .container {{ max-width: 700px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
+                h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
+                .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 6px; background: #00ffcc; color: black; font-weight: bold; font-size: 1.1em; }}
                 .meta {{ color: #8b949e; font-size: 0.9em; margin: 15px 0; }}
-                .body-box {{ background: #0d1117; padding: 20px; border-left: 4px solid #58a6ff; font-family: monospace; white-space: pre-wrap; border-radius: 4px; color: #e6edf3; margin-top: 10px; overflow-x: auto; }}
-                .highlight {{ color: #ff7b72; font-weight: bold; }}
+                .body-box {{ background: rgba(0, 0, 0, 0.4); padding: 20px; border: 1px solid #ff007f; font-family: monospace; white-space: pre-wrap; border-radius: 8px; color: #e6edf3; margin-top: 10px; text-align: left; }}
+                .highlight {{ color: #ff007f; font-weight: bold; font-size: 1.1em; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>💻 Master Mail Automation Hub</h1>
-                <p><strong>Status:</strong> <span class="status-badge">{latest_email_status['status']}</span></p>
-                <p class="meta"><strong>🕒 Last Checked/Updated:</strong> {latest_email_status['timestamp']}</p>
-                <p><strong>📧 Latest Sender:</strong> <span class="highlight">{latest_email_status['sender']}</span></p>
-                <h3>📄 Extracted Email Body:</h3>
-                <div class="body-box">{latest_email_status['body']}</div>
+                <h1>💻 SGDEV Mail Automation Hub</h1>
+                <p><strong>System Status:</strong> <span class="status-badge">{latest_email_status['status']}</span></p>
+                <p class="meta"><strong>🕒 Last Updated:</strong> {latest_email_status['timestamp']}</p>
+                <p><strong>📧 Last Sender:</strong> <span class="highlight">{latest_email_status['sender']}</span></p>
+                <div style="text-align: left;">
+                    <h3 style="color: #00ffcc;">📄 Received Message:</h3>
+                    <div class="body-box">{latest_email_status['body']}</div>
+                </div>
             </div>
         </body>
     </html>
@@ -112,4 +141,5 @@ async def view_dashboard_and_trigger():
     return html_content
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
