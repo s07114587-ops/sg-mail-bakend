@@ -5,17 +5,28 @@ import os
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+# CORS ইম্পোর্ট করা হলো
+from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 
 app = FastAPI(title="🔥 SGDEV Mail Automation 🔥")
 
+# এই পার্টটাই সব প্ল্যাটফর্ম থেকে রিকোয়েস্ট এক্সেপ্ট করবে (Cross-Platform Fix)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # "*" মানে যেকোনো ওয়েবসাইট বা ক্রন-জব একে হিট করতে পারবে
+    allow_credentials=True,
+    allow_methods=["*"], # সব ধরণের রিকোয়েস্ট (GET, POST) এলাউড
+    allow_headers=["*"],
+)
+
 # তোর মেইল কনফিগারেশন
 EMAIL = "sgdev@netc.fr"
-PASSWORD = os.getenv('MAILO_PASSWORD') # Render-এর Environment Variable থেকে পাসওয়ার্ড নেবে
+PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
 SMTP_SERVER = "mail.mailo.com"
 
-# গ্লোবাল মেমোরি (ব্রাউজারে ডেটা দেখানোর জন্য)
+# গলোবাল মেমোরি
 latest_email_status = {
     "status": "Waiting for cron-job to check inbox...",
     "sender": "N/A",
@@ -24,12 +35,9 @@ latest_email_status = {
 }
 
 def send_reply(to_email, original_subject):
-    """অটোমেটিক রিপ্লাই পাঠানোর ফাংশন (No Watermark!)"""
     try:
         msg = email.message.EmailMessage()
         msg.set_content("Hi! I received your mail. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)")
-        
-        # সাবজেক্ট যদি খালি থাকে তবে একটা ডিফল্ট সাবজেক্ট দেবে
         safe_subject = original_subject if original_subject else "Your Mail"
         msg['Subject'] = f"Re: {safe_subject}"
         msg['From'] = EMAIL
@@ -44,29 +52,24 @@ def send_reply(to_email, original_subject):
 
 @app.get("/run")
 def check_and_reply_inbox():
-    """এই লিঙ্কটাই cron-job.org প্রতি ১ মিনিট পর পর হিট করবে"""
     global latest_email_status
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
         mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
 
-        # আনরিড মেইল খুঁজছে
         _, messages = mail.search(None, 'UNSEEN')
         
         if not messages[0]:
-            print("Cron-job pinged: No new messages found.")
             mail.logout()
             return {"status": "Success", "message": "Checked inbox. No new emails."}
 
-        # মেইল পেলে প্রসেস করবে
         for num in messages[0].split():
             _, msg_data = mail.fetch(num, '(RFC822)')
             raw_email = email.message_from_bytes(msg_data[0][1])
             subject = raw_email.get('Subject', 'No Subject')
             sender = raw_email.get("From", "Unknown Sender")
             
-            # সেফ বডি এক্সট্রাকশন (তোর আগের ফিক্স করা লজিক)
             body = ""
             if raw_email.is_multipart():
                 for part in raw_email.walk():
@@ -80,19 +83,12 @@ def check_and_reply_inbox():
                 if payload:
                     body = payload.decode('utf-8', errors='ignore')
 
-            # স্ট্রিং কনভার্সন গ্যারান্টি
             body = str(body) if body is not None else ""
             cleaned_body = body.replace('\r\n', '\n').strip()
 
-            print(f"New Mail from {sender}: {cleaned_body[:50]}")
-
-            # রিপ্লাই পাঠানো
             send_reply(sender, subject)
-            
-            # মেইলটাকে "Read" মার্ক করা
             mail.store(num, '+FLAGS', '\\Seen')
 
-            # ড্যাশবোর্ডের জন্য ডেটা আপডেট করা
             latest_email_status = {
                 "status": "🔥 New Mail Processed & Replied! 🔥",
                 "sender": sender,
@@ -104,12 +100,10 @@ def check_and_reply_inbox():
         return {"status": "Success", "message": "Emails processed and replied!"}
 
     except Exception as e:
-        print(f"Error checking inbox: {e}")
         return {"status": "Error", "detail": str(e)}
 
 @app.get("/", response_class=HTMLResponse)
 async def view_dashboard():
-    """তোর মেইন ড্যাশবোর্ড (ব্রাউজারে দেখার জন্য)"""
     html_content = f"""
     <html>
         <head>
