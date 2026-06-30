@@ -1,6 +1,7 @@
 import imaplib
 import smtplib
-import email
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import os
 from datetime import datetime
 from fastapi import FastAPI
@@ -32,25 +33,30 @@ global_memory = {
 
 def send_reply(to_email, original_subject):
     try:
-        msg = email.message.EmailMessage()
-        msg.set_content("Hi! I received your mail. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)")
+        # MIME structure তৈরি করা হচ্ছে যাতে মেইল ড্রপ না হয়
+        msg = MIMEMultipart()
         
-        # হেডার ক্লিনআপ (যাতে কোনো এরর না আসে)
+        # হেডার ক্লিনআপ
         safe_subject = original_subject if original_subject else "Your Mail"
         safe_subject = str(safe_subject).replace('\r', '').replace('\n', '').strip()
         to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
 
         msg['Subject'] = f"Re: {safe_subject}"
-        msg['From'] = EMAIL
+        msg['From'] = f"SGDEV Automation <{EMAIL}>"
         msg['To'] = to_email
+        
+        # বডি টেক্সট যোগ করা
+        body_text = "Hi! I received your mail. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)"
+        msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
 
-        # 🔥 ১০০০ IQ ট্রিক: পোর্ট ৪৬৫ (SMTP_SSL) দিয়ে মেলো সার্ভারে ডাইরেক্ট পুশ
+        # 🔥 ১০০০ IQ SSL সিকিউর কানেকশন উইথ EHLO
         print(f"Connecting to Mailo SMTP via Port 465 SSL...")
-        with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=30) as smtp:
-            smtp.ehlo()  # সার্ভারকে আইডেন্টিফাই করা হচ্ছে
-            smtp.login(EMAIL, PASSWORD)
-            smtp.send_message(msg)
-        print(f"✅ Reply successfully sent to {to_email} via Mailo SMTP!")
+        smtp = smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=20)
+        smtp.ehlo()
+        smtp.login(EMAIL, PASSWORD)
+        smtp.sendmail(EMAIL, to_email, msg.as_string())
+        smtp.quit()
+        print(f"✅ Reply successfully sent to {to_email}!")
     except Exception as e:
         print(f"🚨 Mailo SMTP Replying Failed: {e}")
 
@@ -74,7 +80,7 @@ def check_and_reply_inbox():
             subject = raw_email.get('Subject', 'No Subject')
             sender = raw_email.get("From", "Unknown Sender")
             
-            # বডি রিড করার লজিক
+            # ক্লিন বাডি রিড লজিক
             body = ""
             if raw_email.is_multipart():
                 for part in raw_email.walk():
@@ -91,7 +97,7 @@ def check_and_reply_inbox():
             body = str(body) if body is not None else ""
             cleaned_body = body.replace('\r\n', '\n').strip()
 
-            # মেলোর নিজস্ব SMTP দিয়ে রিপ্লাই পাঠানো হচ্ছে
+            # রিপ্লাই ফাংশন ট্রিগার
             send_reply(sender, subject)
             
             mail.store(num, '+FLAGS', '\\Seen')
