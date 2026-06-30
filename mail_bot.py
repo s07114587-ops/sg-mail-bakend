@@ -35,32 +35,32 @@ def send_reply(to_email, original_subject):
         msg = email.message.EmailMessage()
         msg.set_content("Hi! I received your mail. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)")
         
-        # 🔥 FIX 1: সাবজেক্ট থেকে সব নিউ-লাইন (\r, \n) রিমুভ করা হচ্ছে যাতে হেডার এরর না আসে
+        # সাবজেক্ট ও ইমেইল হেডার ক্লিনআপ
         safe_subject = original_subject if original_subject else "Your Mail"
         safe_subject = str(safe_subject).replace('\r', '').replace('\n', '').strip()
-        
-        # 🔥 FIX 2: ইমেইল হেডারগুলোকেও একদম ক্লিন করা হচ্ছে
         to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
 
         msg['Subject'] = f"Re: {safe_subject}"
         msg['From'] = EMAIL
         msg['To'] = to_email
 
-        # 🔥 FIX 3: পোর্ট 587 এবং STARTTLS ব্যবহার করা হচ্ছে কানেকশন টাইম-আউট ফিক্স করতে
-        print(f"Connecting to SMTP server {SMTP_SERVER} on port 587...")
-        with smtplib.SMTP(SMTP_SERVER, 587, timeout=15) as smtp:
-            smtp.starttls() 
+        # মেলো ফ্রি অ্যাকাউন্টের জন্য পোর্ট ৫৮৭-এ ট্রাই করা হচ্ছে (টাইমআউট ৩০ সেকেন্ড)
+        print(f"Attempting to send mail via {SMTP_SERVER}:587...")
+        with smtplib.SMTP(SMTP_SERVER, 587, timeout=30) as smtp:
+            smtp.ehlo()
+            smtp.starttls() # কানেকশন সিকিউর করা হলো
+            smtp.ehlo()
             smtp.login(EMAIL, PASSWORD)
             smtp.send_message(msg)
-        print(f"Reply sent successfully to {to_email}")
+        print(f"Reply successfully sent to {to_email}!")
     except Exception as e:
-        print(f"Error sending reply: {e}")
+        print(f"🚨 SMTP Replying Failed: {e}")
 
 @app.get("/run")
 def check_and_reply_inbox():
     global global_memory
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=15)
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
         mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
 
@@ -76,6 +76,7 @@ def check_and_reply_inbox():
             subject = raw_email.get('Subject', 'No Subject')
             sender = raw_email.get("From", "Unknown Sender")
             
+            # বডি রিড করার লজিক
             body = ""
             if raw_email.is_multipart():
                 for part in raw_email.walk():
@@ -92,9 +93,10 @@ def check_and_reply_inbox():
             body = str(body) if body is not None else ""
             cleaned_body = body.replace('\r\n', '\n').strip()
 
-            # রিপ্লাই ফাংশন কল
+            # অটো-রিপ্লাই পাঠানো হচ্ছে
             send_reply(sender, subject)
             
+            # মেইলটি রিড হিসেবে মার্ক করা হচ্ছে
             mail.store(num, '+FLAGS', '\\Seen')
 
             global_memory = {
@@ -122,7 +124,8 @@ async def view_dashboard():
                 h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
                 .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 6px; background: #00ffcc; color: black; font-weight: bold; font-size: 1.1em; }}
                 .meta {{ color: #8b949e; font-size: 0.9em; margin: 15px 0; }}
-                .body-box {{ background: rgba(0, 0, 0, 0.4); padding: 20px; border: 1px solid #ff007f; font-family: monospace; white-space: pre-wrap; border-radius: 8px; color: #e6edf3; margin-top: 10px; text-align: left; }}
+                /* word-break ফিক্স করা হলো যাতে স্ক্রিন না ভাঙে */
+                .body-box {{ background: rgba(0, 0, 0, 0.4); padding: 20px; border: 1px solid #ff007f; font-family: monospace; white-space: pre-wrap; word-break: break-all; border-radius: 8px; color: #e6edf3; margin-top: 10px; text-align: left; }}
                 .highlight {{ color: #ff007f; font-weight: bold; font-size: 1.1em; }}
             </style>
         </head>
