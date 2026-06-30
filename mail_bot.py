@@ -35,7 +35,7 @@ def send_reply(to_email, original_subject):
         msg = email.message.EmailMessage()
         msg.set_content("Hi! I received your mail. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)")
         
-        # সাবজেক্ট ও ইমেইল হেডার ক্লিনআপ
+        # হেডার ক্লিনআপ (যাতে কোনো এরর না আসে)
         safe_subject = original_subject if original_subject else "Your Mail"
         safe_subject = str(safe_subject).replace('\r', '').replace('\n', '').strip()
         to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
@@ -44,17 +44,15 @@ def send_reply(to_email, original_subject):
         msg['From'] = EMAIL
         msg['To'] = to_email
 
-        # মেলো ফ্রি অ্যাকাউন্টের জন্য পোর্ট ৫৮৭-এ ট্রাই করা হচ্ছে (টাইমআউট ৩০ সেকেন্ড)
-        print(f"Attempting to send mail via {SMTP_SERVER}:587...")
-        with smtplib.SMTP(SMTP_SERVER, 587, timeout=30) as smtp:
-            smtp.ehlo()
-            smtp.starttls() # কানেকশন সিকিউর করা হলো
-            smtp.ehlo()
+        # 🔥 ১০০০ IQ ট্রিক: পোর্ট ৪৬৫ (SMTP_SSL) দিয়ে মেলো সার্ভারে ডাইরেক্ট পুশ
+        print(f"Connecting to Mailo SMTP via Port 465 SSL...")
+        with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=30) as smtp:
+            smtp.ehlo()  # সার্ভারকে আইডেন্টিফাই করা হচ্ছে
             smtp.login(EMAIL, PASSWORD)
             smtp.send_message(msg)
-        print(f"Reply successfully sent to {to_email}!")
+        print(f"✅ Reply successfully sent to {to_email} via Mailo SMTP!")
     except Exception as e:
-        print(f"🚨 SMTP Replying Failed: {e}")
+        print(f"🚨 Mailo SMTP Replying Failed: {e}")
 
 @app.get("/run")
 def check_and_reply_inbox():
@@ -93,10 +91,9 @@ def check_and_reply_inbox():
             body = str(body) if body is not None else ""
             cleaned_body = body.replace('\r\n', '\n').strip()
 
-            # অটো-রিপ্লাই পাঠানো হচ্ছে
+            # মেলোর নিজস্ব SMTP দিয়ে রিপ্লাই পাঠানো হচ্ছে
             send_reply(sender, subject)
             
-            # মেইলটি রিড হিসেবে মার্ক করা হচ্ছে
             mail.store(num, '+FLAGS', '\\Seen')
 
             global_memory = {
@@ -124,7 +121,6 @@ async def view_dashboard():
                 h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
                 .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 6px; background: #00ffcc; color: black; font-weight: bold; font-size: 1.1em; }}
                 .meta {{ color: #8b949e; font-size: 0.9em; margin: 15px 0; }}
-                /* word-break ফিক্স করা হলো যাতে স্ক্রিন না ভাঙে */
                 .body-box {{ background: rgba(0, 0, 0, 0.4); padding: 20px; border: 1px solid #ff007f; font-family: monospace; white-space: pre-wrap; word-break: break-all; border-radius: 8px; color: #e6edf3; margin-top: 10px; text-align: left; }}
                 .highlight {{ color: #ff007f; font-weight: bold; font-size: 1.1em; }}
             </style>
