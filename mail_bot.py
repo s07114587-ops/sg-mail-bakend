@@ -1,13 +1,14 @@
 import imaplib
 import email
 import os
+import requests  # পোর্ট ব্লকিং বাইপাস করার জন্য HTTP ওস্তাদ
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 
-app = FastAPI(title="💻 SGDEV Live Automation Logs 💻")
+app = FastAPI(title="💻 SGDEV Render Mail Automation 💻")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,16 +23,61 @@ EMAIL = "sgdev@netc.fr"
 MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
 
-# মেমোরি লগ (এখানে মেইলের আসল বডি বা ওটিপি সেভই হবে না)
 global_memory = {
     "status": "🟢 System Idle. Waiting for Cron Job...",
     "sender": "No Mail Checked Yet",
     "subject": "N/A",
-    "timestamp": "N/A"
+    "timestamp": "N/A",
+    "reply_status": "No reply triggered yet."
 }
 
+def send_http_reply_mailo(to_email, original_subject):
+    global global_memory
+    try:
+        clean_to = str(to_email).replace('\r', '').replace('\n', '').strip()
+        clean_subject = str(original_subject if original_subject else "Mail").replace('\r', '').replace('\n', '').strip()
+        body_text = f"Hi!\n\nI successfully received your mail regarding '{clean_subject}'. This is an automatic secure reply from SGDEV Cloud Engine hosted on Render.\n\nBest Regards,\nSubrata Ghosh (SGDEV)"
+
+        # 🌐 ব্রাউজার সেশন ইমিটেশন (মেলো ফায়ারওয়াল বাইপাস)
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        })
+
+        # স্টেপ ১: মেলো ওয়েব লগইন
+        login_url = "https://www.mailo.com/mailo/app/login.php"
+        login_payload = {
+            "login": EMAIL,
+            "password": MAILO_PASSWORD,
+            "action": "login"
+        }
+        
+        login_res = session.post(login_url, data=login_payload, timeout=15)
+        
+        # স্টেপ ২: ব্রাউজার গেটওয়ে দিয়ে সিকিউর HTTP মেইল সেন্ড
+        send_url = "https://www.mailo.com/mailo/app/send_mail.php"
+        mail_payload = {
+            "to": clean_to,
+            "subject": f"Re: {clean_subject}",
+            "body": body_text,
+            "submit": "send"
+        }
+        
+        send_res = session.post(send_url, data=mail_payload, timeout=15)
+        
+        if send_res.status_code == 200:
+            global_memory["reply_status"] = f"✅ Auto-Reply Sent Successfully via HTTP to {clean_to}!"
+            return True
+        else:
+            global_memory["reply_status"] = f"⚠️ Mailo Web Gateway returned status {send_res.status_code}"
+            return False
+
+    except Exception as e:
+        global_memory["reply_status"] = f"🚨 HTTP Send Failed: {str(e)}"
+        return False
+
 @app.get("/run")
-def check_inbox_log():
+def check_and_reply_cron():
     global global_memory
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
@@ -42,7 +88,7 @@ def check_inbox_log():
         
         if not messages[0]:
             mail.logout()
-            global_memory["status"] = "🟢 Checked: Inbox is Clean & Empty."
+            global_memory["status"] = "🟢 Checked: Inbox Empty."
             global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
             return {"status": "Success", "message": "Inbox is empty."}
 
@@ -52,18 +98,19 @@ def check_inbox_log():
         _, msg_data = mail.fetch(latest_mail_id, '(RFC822)')
         raw_email = email.message_from_bytes(msg_data[0][1])
         
-        # শুধু সেন্ডার আর সাবজেক্ট নেওয়া হচ্ছে (বডি রিড করা পুরোপুরি বাদ!)
         subject = raw_email.get('Subject', 'No Subject')
         sender = raw_email.get("From", "Unknown Sender")
 
-        # ড্যাশবোর্ড লগে ডেটা আপডেট
-        global_memory["status"] = "🚀 Cron Sync Successful! Mail Tracking Active."
+        # 🚀 মেলো জেনুইন ব্রাউজার রুট দিয়ে অটো-রিপ্লাই ট্রিগার
+        send_http_reply_mailo(sender, subject)
+
+        global_memory["status"] = "🚀 Cron Sync Complete & Reply Executed!"
         global_memory["sender"] = sender
         global_memory["subject"] = subject
         global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
         
         mail.logout()
-        return {"status": "Synced", "sender_log": sender}
+        return {"status": "Synced", "auto_reply": global_memory["reply_status"]}
 
     except Exception as e:
         global_memory["status"] = f"🚨 Sync Error: {str(e)}"
@@ -74,12 +121,13 @@ async def view_public_logs():
     html_content = f"""
     <html>
         <head>
-            <title>SGDEV System Logs</title>
+            <title>SGDEV System Tracker</title>
             <style>
                 body {{ font-family: 'Segoe UI', sans-serif; background-color: #0a0a12; color: #c9d1d9; padding: 40px; text-align: center; }}
                 .container {{ max-width: 750px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
                 h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
                 .status-box {{ background: #16162a; border-left: 5px solid #00ffcc; padding: 15px; border-radius: 4px; text-align: left; font-family: monospace; font-size: 1.1em; margin: 20px 0; }}
+                .reply-box {{ background: #1b2a1c; border: 1px solid #00ffcc; padding: 12px; border-radius: 4px; color: #99ffbc; text-align: left; font-family: monospace; margin: 15px 0; }}
                 .log-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; font-family: monospace; text-align: left; }}
                 .log-table th, .log-table td {{ padding: 12px; border-bottom: 1px solid #222; }}
                 .log-table th {{ color: #00ffcc; border-bottom: 2px solid #00ffcc; }}
@@ -92,6 +140,10 @@ async def view_public_logs():
                 
                 <div class="status-box">
                     <strong>SYSTEM LOG:</strong> {global_memory['status']}
+                </div>
+
+                <div class="reply-box">
+                    <strong>📩 AUTOMATION SMTP OUTPUT:</strong> {global_memory['reply_status']}
                 </div>
 
                 <table class="log-table">
@@ -112,7 +164,6 @@ async def view_public_logs():
                         <td style="color: #00ffcc;">{global_memory['timestamp']}</td>
                     </tr>
                 </table>
-                <p style="color: #555; font-size: 0.85em; margin-top: 30px;">🔒 Security Notice: Private message bodies and OTPs are not stored or rendered on this endpoint.</p>
             </div>
         </body>
     </html>
