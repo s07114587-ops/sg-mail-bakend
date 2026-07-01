@@ -36,7 +36,6 @@ def send_reply(to_email, original_subject):
     try:
         msg = MIMEMultipart()
         
-        # হেডার ক্লিনআপ
         safe_subject = original_subject if original_subject else "Your Mail"
         safe_subject = str(safe_subject).replace('\r', '').replace('\n', '').strip()
         to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
@@ -45,20 +44,29 @@ def send_reply(to_email, original_subject):
         msg['From'] = EMAIL
         msg['To'] = to_email
         
-        # একটি স্ট্যান্ডার্ড মেসেজ বডি
         body_text = "Hi! I received your mail via Mailo server. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)"
         msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
 
-        # 🔥 ট্রিক: পোর্ট ৪৬৫ (SSL) দিয়ে মেলো-র সিকিউরিটি ভেদ করার চেষ্টা
-        print(f"Connecting to Mailo SMTP via Port 465 SSL...")
-        with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=30) as smtp:
+        # 🔥 ১০০০ IQ ট্রিক: মেলো-র অল্টারনেটিভ পোর্ট ২৫২৫ দিয়ে ট্রাই করা হচ্ছে (যা সিকিউরিটি বাইপাস করতে পারে)
+        print(f"Connecting to Mailo SMTP via Port 2525...")
+        with smtplib.SMTP(SMTP_SERVER, 2525, timeout=30) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
             smtp.ehlo()
             smtp.login(EMAIL, PASSWORD)
             smtp.sendmail(EMAIL, to_email, msg.as_string())
-        print(f"✅ Reply successfully sent to {to_email} via Mailo SMTP!")
+        print(f"✅ Reply successfully sent to {to_email} via Port 2525!")
     except Exception as e:
-        # এই প্রিন্টটাই আমাদের রেন্ডার লগে আসল এররটা দেখাবে!
-        print(f"🚨 Mailo SMTP Replying Failed: {e}")
+        print(f"🚨 Port 2525 Failed, trying Port 25...")
+        try:
+            # যদি ২৫২৫ ব্লক থাকে, তবে স্ট্যান্ডার্ড পোর্ট ২৫ দিয়ে শেষ চেষ্টা
+            with smtplib.SMTP(SMTP_SERVER, 25, timeout=30) as smtp:
+                smtp.ehlo()
+                smtp.login(EMAIL, PASSWORD)
+                smtp.sendmail(EMAIL, to_email, msg.as_string())
+            print(f"✅ Reply successfully sent to {to_email} via Port 25!")
+        except Exception as e2:
+            print(f"🚨 All Mailo SMTP Ports Failed: {e2}")
 
 @app.get("/run")
 def check_and_reply_inbox():
@@ -98,7 +106,6 @@ def check_and_reply_inbox():
         body = str(body) if body is not None else ""
         cleaned_body = body.replace('\r\n', '\n').strip()
 
-        # রিপ্লাই পাঠানোর চেষ্টা
         send_reply(sender, subject)
 
         global_memory = {
