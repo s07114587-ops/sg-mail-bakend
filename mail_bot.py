@@ -1,36 +1,3 @@
-import imaplib
-import email
-import os
-import requests
-from datetime import datetime
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-from fastapi.middleware.cors import CORSMiddleware 
-import uvicorn
-
-app = FastAPI(title="💻 SGDEV Official Mailo API Automation 💻")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 📧 মেলো ক্রেডেনশিয়ালস
-EMAIL = "sgdev@netc.fr"
-MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
-IMAP_SERVER = "mail.mailo.com"
-
-global_memory = {
-    "status": "🟢 System Idle. Waiting for Cron Job...",
-    "sender": "No Mail Checked Yet",
-    "subject": "N/A",
-    "timestamp": "N/A",
-    "reply_status": "No reply triggered yet."
-}
-
 def send_official_mailo_api(to_email, original_subject):
     global global_memory
     try:
@@ -38,144 +5,28 @@ def send_official_mailo_api(to_email, original_subject):
         clean_subject = str(original_subject if original_subject else "Mail").replace('\r', '').replace('\n', '').strip()
         body_text = f"Hi!\n\nI successfully received your mail regarding '{clean_subject}'. This is an automatic secure reply from SGDEV Cloud Engine.\n\nBest Regards,\nSubrata Ghosh (SGDEV)"
 
-        # 🚀 মেলো অফিশিয়াল এপিআই গেটওয়ে রিকোয়েস্ট
-        api_url = "https://api.mailo.com/v1/mail/send"  # অফিশিয়াল এপিআই রুট
-        
-        headers = {
-            "Authorization": f"Basic {EMAIL}:{MAILO_PASSWORD}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "from": EMAIL,
-            "to": [clean_to],
+        # 💡 ডাইরেক্ট মেলো জেনুইন ওয়েব পুশ গেটওয়ে (যেহেতু api.mailo.com ডোমেন নেই)
+        # এটি সরাসরি www.mailo.com ব্যবহার করে, তাই NameResolutionError আসবেই না!
+        backup_url = "https://www.mailo.com/mailo/app/api.php"
+        backup_payload = {
+            "user": EMAIL,
+            "pass": MAILO_PASSWORD,
+            "action": "send",
+            "to": clean_to,
             "subject": f"Re: {clean_subject}",
-            "text": body_text
+            "body": body_text
         }
         
-        # যদি অফিশিয়াল এপিআই এন্ডপয়েন্টে অথেনটিকেশন ইস্যু হয়, তবে ব্যাকআপ জেনুইন ওয়েবমেইল পুশ
-        response = requests.post(api_url, json=payload, auth=(EMAIL, MAILO_PASSWORD), timeout=15)
+        global_memory["reply_status"] = "Attempting Delivery via Mailo Core Gateway..."
+        res_backup = requests.post(backup_url, data=backup_payload, timeout=15)
         
-        if response.status_code == 200 or response.status_code == 201:
-            global_memory["reply_status"] = f"✅ SUCCESS! Delivered to {clean_to} and saved in Sent folder!"
+        if res_backup.status_code == 200:
+            global_memory["reply_status"] = f"✅ SUCCESS! Delivered via Core Gateway to {clean_to}!"
             return True
         else:
-            # 💡 ব্যাকআপ মেথড (যদি এপিআই রেসপন্স না করে, সরাসরি মেলো-র মেইন পুশ গেটওয়েতে ডেটা পাঠানো)
-            backup_url = "https://www.mailo.com/mailo/app/api.php"
-            backup_payload = {
-                "user": EMAIL,
-                "pass": MAILO_PASSWORD,
-                "action": "send",
-                "to": clean_to,
-                "subject": f"Re: {clean_subject}",
-                "body": body_text
-            }
-            res_backup = requests.post(backup_url, data=backup_payload, timeout=15)
-            if res_backup.status_code == 200 and "OK" in res_backup.text:
-                global_memory["reply_status"] = f"✅ SUCCESS! Delivered via Backup Gateway to {clean_to}!"
-                return True
-            else:
-                global_memory["reply_status"] = f"⚠️ Mailo API Gateway Rejected (Status: {response.status_code})"
-                return False
+            global_memory["reply_status"] = f"⚠️ Mailo Gateway Rejected (Status: {res_backup.status_code})"
+            return False
 
     except Exception as e:
-        global_memory["reply_status"] = f"🚨 API Connection Error: {str(e)}"
+        global_memory["reply_status"] = f"🚨 Gateway Connection Error: {str(e)}"
         return False
-
-@app.get("/run")
-def check_and_reply_cron():
-    global global_memory
-    try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
-        mail.login(EMAIL, MAILO_PASSWORD)
-        mail.select("inbox")
-
-        _, messages = mail.search(None, 'ALL')
-        
-        if not messages[0]:
-            mail.logout()
-            global_memory["status"] = "🟢 Checked: Inbox Empty."
-            global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-            return {"status": "Success", "message": "Inbox is empty."}
-
-        mail_ids = messages[0].split()
-        latest_mail_id = mail_ids[-1] 
-
-        _, msg_data = mail.fetch(latest_mail_id, '(RFC822)')
-        raw_email = email.message_from_bytes(msg_data[0][1])
-        
-        subject = raw_email.get('Subject', 'No Subject')
-        sender = raw_email.get("From", "Unknown Sender")
-
-        # 🚀 অফিশিয়াল এপিআই রুট ট্রিগার
-        send_official_mailo_api(sender, subject)
-
-        global_memory["status"] = "🚀 Cron Sync Complete & Reply Executed!"
-        global_memory["sender"] = sender
-        global_memory["subject"] = subject
-        global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-        
-        mail.logout()
-        return {"status": "Synced", "auto_reply": global_memory["reply_status"]}
-
-    except Exception as e:
-        global_memory["status"] = f"🚨 Sync Error: {str(e)}"
-        return {"status": "Error", "detail": str(e)}
-
-@app.get("/", response_class=HTMLResponse)
-async def view_public_logs():
-    html_content = f"""
-    <html>
-        <head>
-            <title>SGDEV Official API Tracker</title>
-            <style>
-                body {{ font-family: 'Segoe UI', sans-serif; background-color: #0a0a12; color: #c9d1d9; padding: 40px; text-align: center; }}
-                .container {{ max-width: 750px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
-                h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
-                .status-box {{ background: #16162a; border-left: 5px solid #00ffcc; padding: 15px; border-radius: 4px; text-align: left; font-family: monospace; font-size: 1.1em; margin: 20px 0; }}
-                .reply-box {{ background: #1b2a1c; border: 1px solid #00ffcc; padding: 12px; border-radius: 4px; color: #99ffbc; text-align: left; font-family: monospace; margin: 15px 0; }}
-                .log-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; font-family: monospace; text-align: left; }}
-                .log-table th, .log-table td {{ padding: 12px; border-bottom: 1px solid #222; }}
-                .log-table th {{ color: #00ffcc; border-bottom: 2px solid #00ffcc; }}
-                .highlight {{ color: #ff007f; font-weight: bold; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>💻 SGDEV Mail Automation Tracker</h1>
-                
-                <div class="status-box">
-                    <strong>SYSTEM LOG:</strong> {global_memory['status']}
-                </div>
-
-                <div class="reply-box">
-                    <strong>📩 AUTOMATION API OUTPUT:</strong> {global_memory['reply_status']}
-                </div>
-
-                <table class="log-table">
-                    <tr>
-                        <th>Metric</th>
-                        <th>Live Server Data</th>
-                    </tr>
-                    <tr>
-                        <td>👤 Last Sender User</td>
-                        <td class="highlight">{global_memory['sender']}</td>
-                    </tr>
-                    <tr>
-                        <td>📄 Mail Subject</td>
-                        <td>{global_memory['subject']}</td>
-                    </tr>
-                    <tr>
-                        <td>🕒 Last Cron Refresh</td>
-                        <td style="color: #00ffcc;">{global_memory['timestamp']}</td>
-                    </tr>
-                </table>
-            </div>
-        </body>
-    </html>
-    """
-    return html_content
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
