@@ -1,7 +1,5 @@
 import imaplib
 import smtplib
-import socket
-import socks  # প্রক্সি টানেল হ্যান্ডেল করার জন্য
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import email
@@ -12,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 
-app = FastAPI(title="🔥 SGDEV Mail Automation 🔥")
+app = FastAPI(title="🔥 SGDEV Ultimate Mail Bot 🔥")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,10 +20,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-EMAIL = "sgdev@netc.fr"
-PASSWORD = os.getenv('MAILO_PASSWORD')
+# 📧 ইনবক্স রিড হবে মেলো (Mailo) থেকে
+MAILO_EMAIL = "sgdev@netc.fr"
+MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
-SMTP_SERVER = "mail.mailo.com"
+
+# 🚀 রিপ্লাই যাবে জিমেইল (Gmail) এর সেফ রুট দিয়ে
+GMAIL_USER = "তোর_নিজের_জিমেইল_আইডি@gmail.com"  # <--- এখানে তোর জিমেইল আইডি বসাবি
+GMAIL_APP_PASS = os.getenv('GMAIL_APP_PASSWORD') # <--- রেন্ডারে এই ভেরিয়েবলটা সেট করব
+SMTP_SERVER = "smtp.gmail.com"
 
 global_memory = {
     "status": "Waiting for /run...",
@@ -37,71 +40,39 @@ global_memory = {
 
 def send_reply(to_email, original_subject):
     global global_memory
-    
-    msg = MIMEMultipart()
-    safe_subject = str(original_subject if original_subject else "Your Mail").replace('\r', '').replace('\n', '').strip()
-    to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
-
-    msg['Subject'] = f"Re: {safe_subject}"
-    msg['From'] = EMAIL
-    msg['To'] = to_email
-    
-    body_text = "Hi! I received your mail via Mailo server with Proxy Tunnel. \n\nBest,\nShubhomoy (SGDEV)"
-    msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
-
-    # 🔥 ১০০০ IQ ভিপিএন/প্রক্সি ট্রিক:
-    # এখানে আমরা পাবলিক ফ্রি SOCKS5 প্রক্সি সার্ভার ব্যবহার করছি যাতে রেন্ডারের আইপি হাইড হয়
-    # মেলো সার্ভার ভাববে রিকোয়েস্টটা অন্য কোনো সেফ দেশ বা আইপি থেকে আসছে!
     try:
-        global_memory["smtp_error"] = "Setting up VPN/Proxy Tunnel..."
+        msg = MIMEMultipart()
+        safe_subject = str(original_subject if original_subject else "Your Mail").replace('\r', '').replace('\n', '').strip()
+        to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
+
+        msg['Subject'] = f"Re: {safe_subject}"
+        msg['From'] = GMAIL_USER
+        msg['To'] = to_email
         
-        # একটি স্ট্যান্ডার্ড ওপেন ফ্রি প্রক্সি (প্রয়োজনে আইপি ও পোর্ট চেঞ্জ করা যায়)
-        PROXY_IP = "98.162.25.23" 
-        PROXY_PORT = 4145
-        
-        # সকেটের ওপর ভিপিএন লেয়ার বসানো হচ্ছে
-        socks.set_default_proxy(socks.SOCKS5, PROXY_IP, PROXY_PORT)
-        socket.socket = socks.socksocket
-        
-        global_memory["smtp_error"] = "Tunnel active! Trying Port 465 SSL..."
-        
-        with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=12) as smtp:
+        body_text = "Hi! I received your mail via Mailo system. This is an automated reply from SGDEV Server. \n\nBest,\nShubhomoy (SGDEV)"
+        msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
+
+        print("Sending reply via Gmail Secure SMTP...")
+        with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=15) as smtp:
             smtp.ehlo()
-            smtp.login(EMAIL, PASSWORD)
-            smtp.sendmail(EMAIL, to_email, msg.as_string())
+            smtp.login(GMAIL_USER, GMAIL_APP_PASS)
+            smtp.sendmail(GMAIL_USER, to_email, msg.as_string())
             
-        global_memory["smtp_error"] = "✅ SUCCESS! Bypassed Mailo Block using Proxy!"
+        global_memory["smtp_error"] = "✅ Successfully sent via Gmail Secure SMTP!"
         return True
     except Exception as e:
-        # প্রক্সি ফেল করলে সকেট রিস্টোর করে নরমাল ট্রাই করবে
-        import importlib
-        importlib.reload(socket) 
-        global_memory["smtp_error"] = f"🚨 Proxy Tunnel Failed: {e}. Trying alternate Port 587..."
-        
-        try:
-            with smtplib.SMTP(SMTP_SERVER, 587, timeout=10) as smtp:
-                smtp.ehlo()
-                smtp.starttls()
-                smtp.ehlo()
-                smtp.login(EMAIL, PASSWORD)
-                smtp.sendmail(EMAIL, to_email, msg.as_string())
-            global_memory["smtp_error"] = "✅ Success via alternate Port 587!"
-            return True
-        except Exception as e2:
-            global_memory["smtp_error"] = f"🚨 All routes failed. Proxy Error: {e} | SMTP Error: {e2}"
-            return False
+        final_error = f"🚨 Gmail SMTP Failed: {e}"
+        print(final_error)
+        global_memory["smtp_error"] = final_error
+        return False
 
 @app.get("/run")
 def check_and_reply_inbox():
     global global_memory
     try:
-        # ইনবক্স চ্যাকিংয়ের সময় প্রক্সি লাগবে না, নরমাল সকেট রিস্টোর করা হলো
-        import importlib
-        importlib.reload(socket) 
-        socket.setdefaulttimeout(20.0)
-        
+        # মেলো থেকে মেইল রিড করা হচ্ছে
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
-        mail.login(EMAIL, PASSWORD)
+        mail.login(MAILO_EMAIL, MAILO_PASSWORD)
         mail.select("inbox")
 
         _, messages = mail.search(None, 'ALL')
@@ -133,10 +104,10 @@ def check_and_reply_inbox():
 
         cleaned_body = str(body).replace('\r\n', '\n').strip()
 
-        # প্রক্সি দিয়ে রিপ্লাই ট্রিগার
+        # জিমেইল দিয়ে সেফ রিপ্লাই পাঠানো
         send_reply(sender, subject)
 
-        global_memory["status"] = "🔥 Script Processed with Proxy 🔥"
+        global_memory["status"] = "🔥 Script Processed 🔥"
         global_memory["sender"] = sender
         global_memory["body"] = cleaned_body if cleaned_body else "(No text content)"
         global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
@@ -158,21 +129,21 @@ async def view_dashboard():
                 .container {{ max-width: 700px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
                 h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
                 .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 6px; background: #00ffcc; color: black; font-weight: bold; font-size: 1.1em; }}
-                .error-box {{ background: #2a1b1b; border: 1px solid #ff4444; padding: 15px; border-radius: 6px; color: #ff9999; margin: 15px 0; font-family: monospace; text-align: left; }}
+                .error-box {{ background: #1b2a1b; border: 1px solid #00ffcc; padding: 15px; border-radius: 6px; color: #99ff99; margin: 15px 0; font-family: monospace; text-align: left; }}
                 .body-box {{ background: rgba(0, 0, 0, 0.4); padding: 20px; border: 1px solid #ff007f; font-family: monospace; white-space: pre-wrap; word-break: break-all; border-radius: 8px; color: #e6edf3; margin-top: 10px; text-align: left; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>💻 SGDEV Mail Automation Hub (VPN/Proxy Mode)</h1>
+                <h1>💻 SGDEV Mail Hybrid Automation Hub</h1>
                 <p><strong>System Status:</strong> <span class="status-badge">{global_memory['status']}</span></p>
                 
-                <h3 style="color: #00ffcc; text-align: left;">🛡️ VPN / Route Log:</h3>
+                <h3 style="color: #00ffcc; text-align: left;">🔄 SMTP Output Log:</h3>
                 <div class="error-box">{global_memory['smtp_error']}</div>
 
                 <p><strong>📧 Last Sender:</strong> <span style="color: #ff007f; font-weight: bold;">{global_memory['sender']}</span></p>
                 <div style="text-align: left;">
-                    <h3 style="color: #00ffcc;">📄 Received Message:</h3>
+                    <h3 style="color: #00ffcc;">📄 Received Message from Mailo:</h3>
                     <div class="body-box">{global_memory['body']}</div>
                 </div>
             </div>
