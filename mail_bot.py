@@ -1,14 +1,14 @@
 import imaplib
 import email
 import os
-import requests  # SMTP-র বদলে HTTP রিকোয়েস্ট দিয়ে মেইল পাঠানোর ওস্তাদ লাইব্রেরি
 from datetime import datetime
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.security import APIKeyCookie
 from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 
-app = FastAPI(title="🔥 SGDEV Mail Automation 🔥")
+app = FastAPI(title="🔒 SGDEV Secure Mail Vault 🔒")
 
 app.add_middleware(
     CORSMiddleware,
@@ -18,73 +18,92 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 📧 মেলো ক্রেডেনশিয়ালস
 EMAIL = "sgdev@netc.fr"
-PASSWORD = os.getenv('MAILO_PASSWORD')
+MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
+
+# 🔑 ড্যাশবোর্ড লক পাসওয়ার্ড (রেন্ডার এনভায়রনমেন্ট থেকে আসবে)
+DASHBOARD_PASSWORD = os.getenv('DASHBOARD_PASSWORD')
+
+# কুকি বেসড সিকিউরিটি সেশন
+cookie_sec = APIKeyCookie(name="sgdev_session", auto_error=False)
 
 global_memory = {
     "status": "Waiting for /run...",
     "sender": "N/A",
     "body": "N/A",
-    "timestamp": "N/A",
-    "smtp_error": "No errors tracked yet."
+    "timestamp": "N/A"
 }
 
-def send_reply_via_mailo_web(to_email, original_subject):
-    global global_memory
-    try:
-        global_memory["smtp_error"] = "Initiating Mailo Webmail Request..."
-        
-        safe_subject = str(original_subject if original_subject else "Your Mail").replace('\r', '').replace('\n', '').strip()
-        to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
-        body_text = "Hi! I received your mail via Mailo server. (Bypassed via Webmail Protocol) \n\nBest,\nShubhomoy (SGDEV)"
-
-        # 🔥 ১০০০ IQ মেলো ওয়েবমেইল বাইপাস সেশন
-        session = requests.Session()
-        
-        # স্টেপ ১: মেলো লগইন পেজে হিট করে অথেনটিকেশন নেওয়া
-        login_url = "https://www.mailo.com/mailo/app/login.php"
-        login_data = {
-            "login": EMAIL,
-            "password": PASSWORD,
-            "action": "login"
-        }
-        
-        global_memory["smtp_error"] = "Logging into Mailo via HTTP..."
-        response = session.post(login_url, data=login_data, timeout=15)
-        
-        # স্টেপ ২: লগইন সাকসেস হলে মেলো-র নিজস্ব আউটগোয়িং গেটওয়ে দিয়ে মেইল শুট করা
-        send_url = "https://www.mailo.com/mailo/app/send_mail.php"
-        mail_payload = {
-            "to": to_email,
-            "subject": f"Re: {safe_subject}",
-            "body": body_text,
-            "submit": "send"
-        }
-        
-        global_memory["smtp_error"] = "Sending message through Mailo Web-Gate..."
-        send_response = session.post(send_url, data=mail_payload, timeout=15)
-        
-        if send_response.status_code == 200:
-            global_memory["smtp_error"] = "✅ SUCCESS! Mailo Webmail bypassed the SMTP block permanently!"
-            print("Mail sent successfully via Web Gate!")
-            return True
-        else:
-            raise Exception(f"Mailo responded with status code {send_response.status_code}")
-
-    except Exception as e:
-        final_error = f"🚨 Mailo Web Bypass Failed: {e}"
-        print(final_error)
-        global_memory["smtp_error"] = final_error
+# 🛡️ পাসওয়ার্ড চেক করার সিকিউরিটি ফাংশন
+def is_authenticated(session: str = Depends(cookie_sec)):
+    if not session or session != "authenticated_success":
         return False
+    return True
 
+# 🚪 লগইন পেজ (HTML)
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(error: str = None):
+    error_msg = f"<p class='error'>{error}</p>" if error else ""
+    html = f"""
+    <html>
+        <head>
+            <title>SGDEV Login</title>
+            <style>
+                body {{ font-family: 'Segoe UI', sans-serif; background: #0a0a12; color: #fff; text-align: center; padding-top: 100px; }}
+                .login-box {{ max-width: 400px; margin: auto; background: #141423; padding: 40px; border-radius: 12px; border: 2px solid #ff007f; box-shadow: 0 0 20px rgba(255, 0, 127, 0.2); }}
+                h2 {{ color: #00ffcc; text-shadow: 0 0 10px #00ffcc; }}
+                input[type="password"] {{ width: 100%; padding: 12px; margin: 20px 0; border-radius: 6px; border: 1px solid #ff007f; background: #000; color: #00ffcc; font-size: 1.1em; text-align: center; }}
+                button {{ background: #ff007f; color: white; border: none; padding: 12px 24px; font-size: 1em; font-weight: bold; border-radius: 6px; cursor: pointer; width: 100%; }}
+                button:hover {{ background: #ee006f; box-shadow: 0 0 10px #ff007f; }}
+                .error {{ color: #ff3333; font-weight: bold; margin-bottom: 10px; }}
+            </style>
+        </head>
+        <body>
+            <div class="login-box">
+                <h2>🔒 SGDEV Vault Authentication</h2>
+                {error_msg}
+                <form action="/login" method="POST">
+                    <input type="password" name="password" placeholder="Enter System Password" required autofocus>
+                    <button type="submit">Unlock System</button>
+                </form>
+            </div>
+        </body>
+    </html>
+    """
+    return html
+
+# 🔑 লগইন পাসওয়ার্ড ভেরিফিকেশন অ্যাকশন
+@app.post("/login")
+async def do_login(password: str = status.HTTP_200_OK):
+    from fastapi import Form
+    @app.post("/login")
+    async def handle_login(password: str = Form(...)):
+        if password == DASHBOARD_PASSWORD:
+            response = RedirectResponse(url="/", status_code=303)
+            response.set_cookie(key="sgdev_session", value="authenticated_success", httponly=True)
+            return response
+        return RedirectResponse(url="/login?error=Invalid%20Password", status_code=303)
+    return await handle_login(password)
+
+# 🚪 লগআউট রুট
+@app.get("/logout")
+async def logout():
+    response = RedirectResponse(url="/login")
+    response.delete_cookie("sgdev_session")
+    return response
+
+# 🔄 মেইল রিড করার ট্র্যাকার রুট (পাসওয়ার্ড প্রোটেক্টেড)
 @app.get("/run")
-def check_and_reply_inbox():
+def check_inbox(auth: bool = Depends(is_authenticated)):
+    if not auth:
+        return RedirectResponse(url="/login")
+        
     global global_memory
     try:
-        # মেলো থেকে ইনবক্স রিড করা (IMAP)
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
-        mail.login(EMAIL, PASSWORD)
+        mail.login(EMAIL, MAILO_PASSWORD)
         mail.select("inbox")
 
         _, messages = mail.search(None, 'ALL')
@@ -116,46 +135,52 @@ def check_and_reply_inbox():
 
         cleaned_body = str(body).replace('\r\n', '\n').strip()
 
-        # মেলো-র ওয়েব মেথড দিয়ে রিপ্লাই ট্রিগার
-        send_reply_via_mailo_web(sender, subject)
-
-        global_memory["status"] = "🔥 Script Processed 🔥"
+        global_memory["status"] = "🔥 Vault Synchronized 🔥"
         global_memory["sender"] = sender
         global_memory["body"] = cleaned_body if cleaned_body else "(No text content)"
         global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
         
         mail.logout()
-        return {"status": "Processed", "smtp_status": global_memory["smtp_error"]}
+        return RedirectResponse(url="/", status_code=303)
 
     except Exception as e:
         return {"status": "Error", "detail": str(e)}
 
+# 💻 সিকিউর ড্যাশবোর্ড হাবে হিট (পাসওয়ার্ড ছাড়া কেউ দেখতে পারবে না)
 @app.get("/", response_class=HTMLResponse)
-async def view_dashboard():
+async def view_dashboard(auth: bool = Depends(is_authenticated)):
+    if not auth:
+        return RedirectResponse(url="/login")
+        
     html_content = f"""
     <html>
         <head>
-            <title>SGDEV Mail Automation</title>
+            <title>SGDEV Secure Vault</title>
             <style>
-                body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #0a0a12; color: #c9d1d9; padding: 40px; text-align: center; }}
+                body {{ font-family: 'Segoe UI', sans-serif; background-color: #0a0a12; color: #c9d1d9; padding: 40px; text-align: center; }}
                 .container {{ max-width: 700px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
                 h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
-                .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 6px; background: #00ffcc; color: black; font-weight: bold; font-size: 1.1em; }}
-                .error-box {{ background: #1b2a22; border: 1px solid #00ffcc; padding: 15px; border-radius: 6px; color: #99ffbc; margin: 15px 0; font-family: monospace; text-align: left; }}
+                .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 6px; background: #00ffcc; color: black; font-weight: bold; }}
                 .body-box {{ background: rgba(0, 0, 0, 0.4); padding: 20px; border: 1px solid #ff007f; font-family: monospace; white-space: pre-wrap; word-break: break-all; border-radius: 8px; color: #e6edf3; margin-top: 10px; text-align: left; }}
+                .btn {{ display: inline-block; padding: 10px 20px; background: #ff007f; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; margin: 10px; }}
+                .btn-run {{ background: #00ffcc; color: black; }}
+                .logout-btn {{ background: #444; color: #fff; float: right; font-size: 0.9em; padding: 5px 10px; text-decoration: none; border-radius: 4px; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>💻 SGDEV Mail Automation Hub (Mailo Web-Bypass)</h1>
-                <p><strong>System Status:</strong> <span class="status-badge">{global_memory['status']}</span></p>
+                <a href="/logout" class="logout-btn">🚪 Logout</a>
+                <h1>💻 SGDEV Secure Mail Vault</h1>
+                <p><strong>Vault Status:</strong> <span class="status-badge">{global_memory['status']}</span></p>
                 
-                <h3 style="color: #00ffcc; text-align: left;">🔄 Web Route Log:</h3>
-                <div class="error-box">{global_memory['smtp_error']}</div>
-
-                <p><strong>📧 Last Sender:</strong> <span style="color: #ff007f; font-weight: bold;">{global_memory['sender']}</span></p>
+                <hr style="border: 1px solid #222; margin: 20px 0;">
+                <a href="/run" class="btn btn-run">🔄 Trigger Inbox Refresh (/run)</a>
+                
+                <p style="text-align: left;"><strong>📧 Sender:</strong> <span style="color: #ff007f; font-weight: bold;">{global_memory['sender']}</span></p>
+                <p style="text-align: left;"><strong>🕒 Synced At:</strong> {global_memory['timestamp']}</p>
+                
                 <div style="text-align: left;">
-                    <h3 style="color: #00ffcc;">📄 Received Message:</h3>
+                    <h3 style="color: #00ffcc;">📄 Secret Message Body:</h3>
                     <div class="body-box">{global_memory['body']}</div>
                 </div>
             </div>
