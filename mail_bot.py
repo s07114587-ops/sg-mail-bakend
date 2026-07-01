@@ -26,18 +26,21 @@ IMAP_SERVER = "mail.mailo.com"
 SMTP_SERVER = "mail.mailo.com"
 
 global_memory = {
-    "status": "Waiting for /run to fetch the latest Mailo email...",
+    "status": "Waiting for /run...",
     "sender": "N/A",
     "body": "N/A",
-    "timestamp": "N/A"
+    "timestamp": "N/A",
+    "smtp_error": "No errors tracked yet."  # এখানে লাইভ এরর দেখাবে
 }
 
 def send_reply(to_email, original_subject):
+    global global_memory
+    # ট্রাই করার আগে এরর ক্লিন করে নিচ্ছি
+    global_memory["smtp_error"] = "Attempting to send..."
+    
     try:
         msg = MIMEMultipart()
-        
-        safe_subject = original_subject if original_subject else "Your Mail"
-        safe_subject = str(safe_subject).replace('\r', '').replace('\n', '').strip()
+        safe_subject = str(original_subject if original_subject else "Your Mail").replace('\r', '').replace('\n', '').strip()
         to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
 
         msg['Subject'] = f"Re: {safe_subject}"
@@ -47,32 +50,40 @@ def send_reply(to_email, original_subject):
         body_text = "Hi! I received your mail via Mailo server. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)"
         msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
 
-        # 🔥 ১০০০ IQ ট্রিক: মেলো-র অল্টারনেটিভ পোর্ট ২৫২৫ দিয়ে ট্রাই করা হচ্ছে (যা সিকিউরিটি বাইপাস করতে পারে)
-        print(f"Connecting to Mailo SMTP via Port 2525...")
-        with smtplib.SMTP(SMTP_SERVER, 2525, timeout=30) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
+        # ৪৬৫ পোর্ট ট্রাই
+        print("Trying Port 465 SSL...")
+        with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=15) as smtp:
             smtp.ehlo()
             smtp.login(EMAIL, PASSWORD)
             smtp.sendmail(EMAIL, to_email, msg.as_string())
-        print(f"✅ Reply successfully sent to {to_email} via Port 2525!")
-    except Exception as e:
-        print(f"🚨 Port 2525 Failed, trying Port 25...")
+        global_memory["smtp_error"] = "✅ Successfully sent via Port 465 SSL!"
+        return True
+    except Exception as e1:
+        error_msg = f"Port 465 Failed: {e1}"
+        print(error_msg)
+        
+        # ৪৬৫ ফেল করলে ৫৮৭ ট্রাই
         try:
-            # যদি ২৫২৫ ব্লক থাকে, তবে স্ট্যান্ডার্ড পোর্ট ২৫ দিয়ে শেষ চেষ্টা
-            with smtplib.SMTP(SMTP_SERVER, 25, timeout=30) as smtp:
+            print("Trying Port 587 STARTTLS...")
+            with smtplib.SMTP(SMTP_SERVER, 587, timeout=15) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
                 smtp.ehlo()
                 smtp.login(EMAIL, PASSWORD)
                 smtp.sendmail(EMAIL, to_email, msg.as_string())
-            print(f"✅ Reply successfully sent to {to_email} via Port 25!")
+            global_memory["smtp_error"] = "✅ Successfully sent via Port 587 STARTTLS!"
+            return True
         except Exception as e2:
-            print(f"🚨 All Mailo SMTP Ports Failed: {e2}")
+            final_error = f"🚨 Both Ports Failed! Port 465: {e1} | Port 587: {e2}"
+            print(final_error)
+            global_memory["smtp_error"] = final_error
+            return False
 
 @app.get("/run")
 def check_and_reply_inbox():
     global global_memory
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=25)
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
         mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
 
@@ -80,7 +91,7 @@ def check_and_reply_inbox():
         
         if not messages[0]:
             mail.logout()
-            return {"status": "Success", "message": "Inbox is totally empty."}
+            return {"status": "Success", "message": "Inbox is empty."}
 
         mail_ids = messages[0].split()
         latest_mail_id = mail_ids[-1] 
@@ -103,20 +114,18 @@ def check_and_reply_inbox():
             if payload:
                 body = payload.decode('utf-8', errors='ignore')
 
-        body = str(body) if body is not None else ""
-        cleaned_body = body.replace('\r\n', '\n').strip()
+        cleaned_body = str(body).replace('\r\n', '\n').strip()
 
+        # রিপ্লাই পাঠানো ট্রিগার
         send_reply(sender, subject)
 
-        global_memory = {
-            "status": "🔥 Mailo Automation Active & Processed! 🔥",
-            "sender": sender,
-            "body": cleaned_body if cleaned_body else "(No text content found)",
-            "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-        }
+        global_memory["status"] = "🔥 Script Processed 🔥"
+        global_memory["sender"] = sender
+        global_memory["body"] = cleaned_body if cleaned_body else "(No text content)"
+        global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
         
         mail.logout()
-        return {"status": "Success", "message": f"Latest email processed!"}
+        return {"status": "Processed", "smtp_status": global_memory["smtp_error"]}
 
     except Exception as e:
         return {"status": "Error", "detail": str(e)}
@@ -132,17 +141,19 @@ async def view_dashboard():
                 .container {{ max-width: 700px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
                 h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
                 .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 6px; background: #00ffcc; color: black; font-weight: bold; font-size: 1.1em; }}
-                .meta {{ color: #8b949e; font-size: 0.9em; margin: 15px 0; }}
+                .error-box {{ background: #2a1b1b; border: 1px solid #ff4444; padding: 15px; border-radius: 6px; color: #ff9999; margin: 15px 0; font-family: monospace; text-align: left; }}
                 .body-box {{ background: rgba(0, 0, 0, 0.4); padding: 20px; border: 1px solid #ff007f; font-family: monospace; white-space: pre-wrap; word-break: break-all; border-radius: 8px; color: #e6edf3; margin-top: 10px; text-align: left; }}
-                .highlight {{ color: #ff007f; font-weight: bold; font-size: 1.1em; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>💻 SGDEV Mail Automation Hub (Mailo Mode)</h1>
+                <h1>💻 SGDEV Mail Automation Hub</h1>
                 <p><strong>System Status:</strong> <span class="status-badge">{global_memory['status']}</span></p>
-                <p class="meta"><strong>🕒 Last Updated:</strong> {global_memory['timestamp']}</p>
-                <p><strong>📧 Last Sender:</strong> <span class="highlight">{global_memory['sender']}</span></p>
+                
+                <h3 style="color: #ff4444; text-align: left;">⚠️ SMTP / Output Log:</h3>
+                <div class="error-box">{global_memory['smtp_error']}</div>
+
+                <p><strong>📧 Last Sender:</strong> <span style="color: #ff007f; font-weight: bold;">{global_memory['sender']}</span></p>
                 <div style="text-align: left;">
                     <h3 style="color: #00ffcc;">📄 Received Message:</h3>
                     <div class="body-box">{global_memory['body']}</div>
