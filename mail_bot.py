@@ -9,7 +9,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 
-app = FastAPI(title="💻 SGDEV 100% Open-Source Mail Automation 💻")
+app = FastAPI(title="💻 SGDEV Mailo Auto-Login Engine 💻")
 
 app.add_middleware(
     CORSMiddleware,
@@ -19,7 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 📧 মেলো ক্রেডেনশিয়ালস
+# 📧 মেলো ক্রেডেনশিয়ালস (রেন্ডার এনভায়রনমেন্ট থেকে আসবে)
 EMAIL = "sgdev@netc.fr"
 MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
@@ -32,24 +32,21 @@ global_memory = {
     "reply_status": "No reply triggered yet."
 }
 
-def send_secure_open_source_reply(to_email, original_subject):
+def send_mailo_auto_session_reply(to_email, original_subject):
     global global_memory
     try:
         clean_to = str(to_email).replace('\r', '').replace('\n', '').strip()
         clean_subject = str(original_subject if original_subject else "Mail").replace('\r', '').replace('\n', '').strip()
-        body_text = f"Hi!\n\nI successfully received your mail regarding '{clean_subject}'. This is an automatic secure reply from SGDEV 100% Open-Source Engine.\n\nBest Regards,\nSubrata Ghosh (SGDEV)"
+        body_text = f"Hi!\n\nI successfully received your mail regarding '{clean_subject}'. This is an automatic secure reply from SGDEV Mailo Engine.\n\nBest Regards,\nSubrata Ghosh (SGDEV)"
 
-        # 🌐 মেলো ডাইরেক্ট সিকিউর ওয়েব সেশন ইন্টারফেস
+        # 🌐 ১. একটি লাইভ সেশন তৈরি করা (যা কুকি ধরে রাখবে)
         session = requests.Session()
         session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Referer": "https://www.mailo.com/"
         })
 
-        # ১. সেশন জেনারেট করতে মেলো হোমপেজ হিট করা
-        init_res = session.get("https://www.mailo.com/", timeout=15)
-
-        # ২. সিকিউর ওয়েব পোর্টাল দিয়ে লগইন অথেনটিকেশন ট্রিগার
+        # 🔐 ২. কোডের ভেতর মেলো পোর্টালে ব্যাকএন্ড লগইন ট্রিগার
         login_url = "https://www.mailo.com/mailo/app/login.php"
         login_data = {
             "login": EMAIL,
@@ -58,9 +55,10 @@ def send_secure_open_source_reply(to_email, original_subject):
             "stay_logged": "1"
         }
         
+        # লগইন রিকোয়েস্ট পাঠানো (মেলো এখানে আমাদের সেশন কুকি দিয়ে দেবে)
         login_res = session.post(login_url, data=login_data, timeout=15)
         
-        # ৩. মেলো-র মেম্বার প্যানেল থেকে মেল পুশ রুট (HTTP HTTPS রিকোয়েস্ট - যা রেন্ডার ব্লক করতে পারে না)
+        # 📨 ৩. সেই লাইভ সেশন কুকি ব্যবহার করে মেইল পাঠানো
         send_url = "https://www.mailo.com/mailo/app/send_mail.php"
         mail_payload = {
             "to": clean_to,
@@ -72,22 +70,23 @@ def send_secure_open_source_reply(to_email, original_subject):
         
         send_res = session.post(send_url, data=mail_payload, timeout=15)
         
-        # ৪. ভেরিফিকেশন চেক
+        # 📊 ৪. ভেরিফিকেশন চেক
         if send_res.status_code == 200:
-            global_memory["reply_status"] = f"✅ SUCCESS! 100% Securely Sent to {clean_to}!"
+            global_memory["reply_status"] = f"✅ SUCCESS! Generated Auto-Session & Sent to {clean_to}!"
             return True
         else:
-            global_memory["reply_status"] = f"⚠️ Mailo Rejected with Code: {send_res.status_code}"
+            global_memory["reply_status"] = f"⚠️ Mailo Gateway Rejected (Status: {send_res.status_code})"
             return False
 
     except Exception as e:
-        global_memory["reply_status"] = f"🚨 Secure Gateway Error: {str(e)}"
+        global_memory["reply_status"] = f"🚨 Auto-Session Error: {str(e)}"
         return False
 
 @app.get("/run")
 def check_and_reply_cron():
     global global_memory
     try:
+        # ইনবক্স চেক করা
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
         mail.login(EMAIL, MAILO_PASSWORD)
         mail.select("inbox")
@@ -109,12 +108,12 @@ def check_and_reply_cron():
         subject = raw_email.get('Subject', 'No Subject')
         sender = raw_email.get("From", "Unknown Sender")
 
-        # সেন্ডারের ক্লিন ইমেইল আইডি এক্সট্র্যাক্ট করা (যেমন: Subrata <abc@gmail.com> থেকে শুধু abc@gmail.com নেওয়া)
+        # ক্লিন ইমেইল আইডি বের করা
         email_finder = re.search(r'[\w\.-]+@[\w\.-]+', sender)
         clean_sender = email_finder.group(0) if email_finder else sender
 
-        # ওয়ান অ্যান্ড অনলি সিকিউর ওপেন সোর্স অটো-রিপ্লাই ট্রিগার
-        send_secure_open_source_reply(clean_sender, subject)
+        # কাস্টম অটো-লগইন রিপ্লাই ট্রিগার
+        send_mailo_auto_session_reply(clean_sender, subject)
 
         global_memory["status"] = "🚀 SGDEV System Synchronized Successfully!"
         global_memory["sender"] = clean_sender
@@ -133,7 +132,7 @@ async def view_public_logs():
     html_content = f"""
     <html>
         <head>
-            <title>SGDEV Secure Log Tracker</title>
+            <title>SGDEV Mailo Engine Tracker</title>
             <style>
                 body {{ font-family: 'Segoe UI', sans-serif; background-color: #0a0a12; color: #c9d1d9; padding: 40px; text-align: center; }}
                 .container {{ max-width: 750px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
@@ -148,7 +147,7 @@ async def view_public_logs():
         </head>
         <body>
             <div class="container">
-                <h1>🛡️ SGDEV 100% Open-Source Mail Automation</h1>
+                <h1>💻 SGDEV Mailo Auto-Session Engine</h1>
                 
                 <div class="status-box">
                     <strong>SYSTEM LOG:</strong> {global_memory['status']}
@@ -176,7 +175,6 @@ async def view_public_logs():
                         <td style="color: #00ffcc;">{global_memory['timestamp']}</td>
                     </tr>
                 </table>
-                <p style="color: #555; font-size: 0.85em; margin-top: 30px;">🔒 Data Privacy Shield: This platform is open-source and completely localized to your Render environment variable.</p>
             </div>
         </body>
     </html>
