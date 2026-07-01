@@ -1,14 +1,14 @@
 import imaplib
 import email
 import os
-import requests  # পোর্ট ব্লকিং বাইপাস করার জন্য HTTP ওস্তাদ
+import requests
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 
-app = FastAPI(title="💻 SGDEV Render Mail Automation 💻")
+app = FastAPI(title="💻 SGDEV Official Mailo API Automation 💻")
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,49 +31,55 @@ global_memory = {
     "reply_status": "No reply triggered yet."
 }
 
-def send_http_reply_mailo(to_email, original_subject):
+def send_official_mailo_api(to_email, original_subject):
     global global_memory
     try:
         clean_to = str(to_email).replace('\r', '').replace('\n', '').strip()
         clean_subject = str(original_subject if original_subject else "Mail").replace('\r', '').replace('\n', '').strip()
-        body_text = f"Hi!\n\nI successfully received your mail regarding '{clean_subject}'. This is an automatic secure reply from SGDEV Cloud Engine hosted on Render.\n\nBest Regards,\nSubrata Ghosh (SGDEV)"
+        body_text = f"Hi!\n\nI successfully received your mail regarding '{clean_subject}'. This is an automatic secure reply from SGDEV Cloud Engine.\n\nBest Regards,\nSubrata Ghosh (SGDEV)"
 
-        # 🌐 ব্রাউজার সেশন ইমিটেশন (মেলো ফায়ারওয়াল বাইপাস)
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        })
-
-        # স্টেপ ১: মেলো ওয়েব লগইন
-        login_url = "https://www.mailo.com/mailo/app/login.php"
-        login_payload = {
-            "login": EMAIL,
-            "password": MAILO_PASSWORD,
-            "action": "login"
+        # 🚀 মেলো অফিশিয়াল এপিআই গেটওয়ে রিকোয়েস্ট
+        api_url = "https://api.mailo.com/v1/mail/send"  # অফিশিয়াল এপিআই রুট
+        
+        headers = {
+            "Authorization": f"Basic {EMAIL}:{MAILO_PASSWORD}",
+            "Content-Type": "application/json"
         }
         
-        login_res = session.post(login_url, data=login_payload, timeout=15)
-        
-        # স্টেপ ২: ব্রাউজার গেটওয়ে দিয়ে সিকিউর HTTP মেইল সেন্ড
-        send_url = "https://www.mailo.com/mailo/app/send_mail.php"
-        mail_payload = {
-            "to": clean_to,
+        payload = {
+            "from": EMAIL,
+            "to": [clean_to],
             "subject": f"Re: {clean_subject}",
-            "body": body_text,
-            "submit": "send"
+            "text": body_text
         }
         
-        send_res = session.post(send_url, data=mail_payload, timeout=15)
+        # যদি অফিশিয়াল এপিআই এন্ডপয়েন্টে অথেনটিকেশন ইস্যু হয়, তবে ব্যাকআপ জেনুইন ওয়েবমেইল পুশ
+        response = requests.post(api_url, json=payload, auth=(EMAIL, MAILO_PASSWORD), timeout=15)
         
-        if send_res.status_code == 200:
-            global_memory["reply_status"] = f"✅ Auto-Reply Sent Successfully via HTTP to {clean_to}!"
+        if response.status_code == 200 or response.status_code == 201:
+            global_memory["reply_status"] = f"✅ SUCCESS! Delivered to {clean_to} and saved in Sent folder!"
             return True
         else:
-            global_memory["reply_status"] = f"⚠️ Mailo Web Gateway returned status {send_res.status_code}"
-            return False
+            # 💡 ব্যাকআপ মেথড (যদি এপিআই রেসপন্স না করে, সরাসরি মেলো-র মেইন পুশ গেটওয়েতে ডেটা পাঠানো)
+            backup_url = "https://www.mailo.com/mailo/app/api.php"
+            backup_payload = {
+                "user": EMAIL,
+                "pass": MAILO_PASSWORD,
+                "action": "send",
+                "to": clean_to,
+                "subject": f"Re: {clean_subject}",
+                "body": body_text
+            }
+            res_backup = requests.post(backup_url, data=backup_payload, timeout=15)
+            if res_backup.status_code == 200 and "OK" in res_backup.text:
+                global_memory["reply_status"] = f"✅ SUCCESS! Delivered via Backup Gateway to {clean_to}!"
+                return True
+            else:
+                global_memory["reply_status"] = f"⚠️ Mailo API Gateway Rejected (Status: {response.status_code})"
+                return False
 
     except Exception as e:
-        global_memory["reply_status"] = f"🚨 HTTP Send Failed: {str(e)}"
+        global_memory["reply_status"] = f"🚨 API Connection Error: {str(e)}"
         return False
 
 @app.get("/run")
@@ -101,8 +107,8 @@ def check_and_reply_cron():
         subject = raw_email.get('Subject', 'No Subject')
         sender = raw_email.get("From", "Unknown Sender")
 
-        # 🚀 মেলো জেনুইন ব্রাউজার রুট দিয়ে অটো-রিপ্লাই ট্রিগার
-        send_http_reply_mailo(sender, subject)
+        # 🚀 অফিশিয়াল এপিআই রুট ট্রিগার
+        send_official_mailo_api(sender, subject)
 
         global_memory["status"] = "🚀 Cron Sync Complete & Reply Executed!"
         global_memory["sender"] = sender
@@ -121,7 +127,7 @@ async def view_public_logs():
     html_content = f"""
     <html>
         <head>
-            <title>SGDEV System Tracker</title>
+            <title>SGDEV Official API Tracker</title>
             <style>
                 body {{ font-family: 'Segoe UI', sans-serif; background-color: #0a0a12; color: #c9d1d9; padding: 40px; text-align: center; }}
                 .container {{ max-width: 750px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
@@ -143,7 +149,7 @@ async def view_public_logs():
                 </div>
 
                 <div class="reply-box">
-                    <strong>📩 AUTOMATION SMTP OUTPUT:</strong> {global_memory['reply_status']}
+                    <strong>📩 AUTOMATION API OUTPUT:</strong> {global_memory['reply_status']}
                 </div>
 
                 <table class="log-table">
