@@ -1,5 +1,6 @@
 import imaplib
 import smtplib
+import socket
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import email
@@ -30,59 +31,76 @@ global_memory = {
     "sender": "N/A",
     "body": "N/A",
     "timestamp": "N/A",
-    "smtp_error": "No errors tracked yet."  # এখানে লাইভ এরর দেখাবে
+    "smtp_error": "No errors tracked yet."
 }
 
 def send_reply(to_email, original_subject):
     global global_memory
-    # ট্রাই করার আগে এরর ক্লিন করে নিচ্ছি
-    global_memory["smtp_error"] = "Attempting to send..."
     
+    # ১০০০ IQ ট্রিক: সকেটের ডিফল্ট টাইমআউট ৭ সেকেন্ড করে দেওয়া হলো যাতে কোড ঝুলে না থাকে
+    socket.setdefaulttimeout(7.0)
+    
+    msg = MIMEMultipart()
+    safe_subject = str(original_subject if original_subject else "Your Mail").replace('\r', '').replace('\n', '').strip()
+    to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
+
+    msg['Subject'] = f"Re: {safe_subject}"
+    msg['From'] = EMAIL
+    msg['To'] = to_email
+    
+    body_text = "Hi! I received your mail via Mailo server. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)"
+    msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
+
+    # মেথড ১: পোর্ট ৫৮৭ ট্রাই (STARTTLS)
     try:
-        msg = MIMEMultipart()
-        safe_subject = str(original_subject if original_subject else "Your Mail").replace('\r', '').replace('\n', '').strip()
-        to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
-
-        msg['Subject'] = f"Re: {safe_subject}"
-        msg['From'] = EMAIL
-        msg['To'] = to_email
-        
-        body_text = "Hi! I received your mail via Mailo server. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)"
-        msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
-
-        # ৪৬৫ পোর্ট ট্রাই
-        print("Trying Port 465 SSL...")
-        with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=15) as smtp:
+        global_memory["smtp_error"] = "Trying Port 587 (STARTTLS)..."
+        print("Trying Port 587...")
+        with smtplib.SMTP(SMTP_SERVER, 587, timeout=7) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
             smtp.ehlo()
             smtp.login(EMAIL, PASSWORD)
             smtp.sendmail(EMAIL, to_email, msg.as_string())
-        global_memory["smtp_error"] = "✅ Successfully sent via Port 465 SSL!"
+        global_memory["smtp_error"] = "✅ Successfully sent via Port 587 STARTTLS!"
         return True
     except Exception as e1:
-        error_msg = f"Port 465 Failed: {e1}"
-        print(error_msg)
+        print(f"Port 587 failed: {e1}")
         
-        # ৪৬৫ ফেল করলে ৫৮৭ ট্রাই
+        # মেথড ২: পোর্ট ৪৬৫ ট্রাই (SSL)
         try:
-            print("Trying Port 587 STARTTLS...")
-            with smtplib.SMTP(SMTP_SERVER, 587, timeout=15) as smtp:
-                smtp.ehlo()
-                smtp.starttls()
+            global_memory["smtp_error"] = f"Port 587 timed out. Now trying Port 465 (SSL)..."
+            print("Trying Port 465...")
+            with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=7) as smtp:
                 smtp.ehlo()
                 smtp.login(EMAIL, PASSWORD)
                 smtp.sendmail(EMAIL, to_email, msg.as_string())
-            global_memory["smtp_error"] = "✅ Successfully sent via Port 587 STARTTLS!"
+            global_memory["smtp_error"] = "✅ Successfully sent via Port 465 SSL!"
             return True
         except Exception as e2:
-            final_error = f"🚨 Both Ports Failed! Port 465: {e1} | Port 587: {e2}"
-            print(final_error)
-            global_memory["smtp_error"] = final_error
-            return False
+            # মেথড ৩: পোর্ট ২৫২৫ ট্রাই (বিকল্প পোর্ট)
+            try:
+                global_memory["smtp_error"] = f"Port 465 also failed. Trying Port 2525..."
+                print("Trying Port 2525...")
+                with smtplib.SMTP(SMTP_SERVER, 2525, timeout=7) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls()
+                    smtp.ehlo()
+                    smtp.login(EMAIL, PASSWORD)
+                    smtp.sendmail(EMAIL, to_email, msg.as_string())
+                global_memory["smtp_error"] = "✅ Successfully sent via Port 2525!"
+                return True
+            except Exception as e3:
+                final_error = f"🚨 All Ports Timed Out/Blocked by Mailo! P587: {e1} | P465: {e2} | P2525: {e3}"
+                print(final_error)
+                global_memory["smtp_error"] = final_error
+                return False
 
 @app.get("/run")
 def check_and_reply_inbox():
     global global_memory
     try:
+        # ইনবক্স রিড করার জন্য টাইমআউট বাড়ানো হলো
+        socket.setdefaulttimeout(20.0)
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
         mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
@@ -116,7 +134,7 @@ def check_and_reply_inbox():
 
         cleaned_body = str(body).replace('\r\n', '\n').strip()
 
-        # রিপ্লাই পাঠানো ট্রিগার
+        # মেলো দিয়ে রিপ্লাই পাঠানো স্টার্ট
         send_reply(sender, subject)
 
         global_memory["status"] = "🔥 Script Processed 🔥"
@@ -147,10 +165,10 @@ async def view_dashboard():
         </head>
         <body>
             <div class="container">
-                <h1>💻 SGDEV Mail Automation Hub</h1>
+                <h1>💻 SGDEV Mail Automation Hub (Mailo Anti-Timeout)</h1>
                 <p><strong>System Status:</strong> <span class="status-badge">{global_memory['status']}</span></p>
                 
-                <h3 style="color: #ff4444; text-align: left;">⚠️ SMTP / Output Log:</h3>
+                <h3 style="color: #00ffcc; text-align: left;">🔄 SMTP / Connection Route Log:</h3>
                 <div class="error-box">{global_memory['smtp_error']}</div>
 
                 <p><strong>📧 Last Sender:</strong> <span style="color: #ff007f; font-weight: bold;">{global_memory['sender']}</span></p>
