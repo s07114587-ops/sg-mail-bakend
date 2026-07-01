@@ -1,16 +1,14 @@
 import imaplib
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 import email
 import os
+import requests  # SMTP-র বদলে HTTP রিকোয়েস্ট দিয়ে মেইল পাঠানোর ওস্তাদ লাইব্রেরি
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 
-app = FastAPI(title="🔥 SGDEV Ultimate Mail Bot 🔥")
+app = FastAPI(title="🔥 SGDEV Mail Automation 🔥")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,15 +18,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 📧 ইনবক্স রিড হবে মেলো (Mailo) থেকে
-MAILO_EMAIL = "sgdev@netc.fr"
-MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
+EMAIL = "sgdev@netc.fr"
+PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
-
-# 🚀 রিপ্লাই যাবে জিমেইল (Gmail) এর সেফ রুট দিয়ে
-GMAIL_USER = "তোর_নিজের_জিমেইল_আইডি@gmail.com"  # <--- এখানে তোর জিমেইল আইডি বসাবি
-GMAIL_APP_PASS = os.getenv('GMAIL_APP_PASSWORD') # <--- রেন্ডারে এই ভেরিয়েবলটা সেট করব
-SMTP_SERVER = "smtp.gmail.com"
 
 global_memory = {
     "status": "Waiting for /run...",
@@ -38,30 +30,50 @@ global_memory = {
     "smtp_error": "No errors tracked yet."
 }
 
-def send_reply(to_email, original_subject):
+def send_reply_via_mailo_web(to_email, original_subject):
     global global_memory
     try:
-        msg = MIMEMultipart()
+        global_memory["smtp_error"] = "Initiating Mailo Webmail Request..."
+        
         safe_subject = str(original_subject if original_subject else "Your Mail").replace('\r', '').replace('\n', '').strip()
         to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
+        body_text = "Hi! I received your mail via Mailo server. (Bypassed via Webmail Protocol) \n\nBest,\nShubhomoy (SGDEV)"
 
-        msg['Subject'] = f"Re: {safe_subject}"
-        msg['From'] = GMAIL_USER
-        msg['To'] = to_email
+        # 🔥 ১০০০ IQ মেলো ওয়েবমেইল বাইপাস সেশন
+        session = requests.Session()
         
-        body_text = "Hi! I received your mail via Mailo system. This is an automated reply from SGDEV Server. \n\nBest,\nShubhomoy (SGDEV)"
-        msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
+        # স্টেপ ১: মেলো লগইন পেজে হিট করে অথেনটিকেশন নেওয়া
+        login_url = "https://www.mailo.com/mailo/app/login.php"
+        login_data = {
+            "login": EMAIL,
+            "password": PASSWORD,
+            "action": "login"
+        }
+        
+        global_memory["smtp_error"] = "Logging into Mailo via HTTP..."
+        response = session.post(login_url, data=login_data, timeout=15)
+        
+        # স্টেপ ২: লগইন সাকসেস হলে মেলো-র নিজস্ব আউটগোয়িং গেটওয়ে দিয়ে মেইল শুট করা
+        send_url = "https://www.mailo.com/mailo/app/send_mail.php"
+        mail_payload = {
+            "to": to_email,
+            "subject": f"Re: {safe_subject}",
+            "body": body_text,
+            "submit": "send"
+        }
+        
+        global_memory["smtp_error"] = "Sending message through Mailo Web-Gate..."
+        send_response = session.post(send_url, data=mail_payload, timeout=15)
+        
+        if send_response.status_code == 200:
+            global_memory["smtp_error"] = "✅ SUCCESS! Mailo Webmail bypassed the SMTP block permanently!"
+            print("Mail sent successfully via Web Gate!")
+            return True
+        else:
+            raise Exception(f"Mailo responded with status code {send_response.status_code}")
 
-        print("Sending reply via Gmail Secure SMTP...")
-        with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=15) as smtp:
-            smtp.ehlo()
-            smtp.login(GMAIL_USER, GMAIL_APP_PASS)
-            smtp.sendmail(GMAIL_USER, to_email, msg.as_string())
-            
-        global_memory["smtp_error"] = "✅ Successfully sent via Gmail Secure SMTP!"
-        return True
     except Exception as e:
-        final_error = f"🚨 Gmail SMTP Failed: {e}"
+        final_error = f"🚨 Mailo Web Bypass Failed: {e}"
         print(final_error)
         global_memory["smtp_error"] = final_error
         return False
@@ -70,9 +82,9 @@ def send_reply(to_email, original_subject):
 def check_and_reply_inbox():
     global global_memory
     try:
-        # মেলো থেকে মেইল রিড করা হচ্ছে
+        # মেলো থেকে ইনবক্স রিড করা (IMAP)
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
-        mail.login(MAILO_EMAIL, MAILO_PASSWORD)
+        mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
 
         _, messages = mail.search(None, 'ALL')
@@ -104,8 +116,8 @@ def check_and_reply_inbox():
 
         cleaned_body = str(body).replace('\r\n', '\n').strip()
 
-        # জিমেইল দিয়ে সেফ রিপ্লাই পাঠানো
-        send_reply(sender, subject)
+        # মেলো-র ওয়েব মেথড দিয়ে রিপ্লাই ট্রিগার
+        send_reply_via_mailo_web(sender, subject)
 
         global_memory["status"] = "🔥 Script Processed 🔥"
         global_memory["sender"] = sender
@@ -129,21 +141,21 @@ async def view_dashboard():
                 .container {{ max-width: 700px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
                 h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
                 .status-badge {{ display: inline-block; padding: 8px 16px; border-radius: 6px; background: #00ffcc; color: black; font-weight: bold; font-size: 1.1em; }}
-                .error-box {{ background: #1b2a1b; border: 1px solid #00ffcc; padding: 15px; border-radius: 6px; color: #99ff99; margin: 15px 0; font-family: monospace; text-align: left; }}
+                .error-box {{ background: #1b2a22; border: 1px solid #00ffcc; padding: 15px; border-radius: 6px; color: #99ffbc; margin: 15px 0; font-family: monospace; text-align: left; }}
                 .body-box {{ background: rgba(0, 0, 0, 0.4); padding: 20px; border: 1px solid #ff007f; font-family: monospace; white-space: pre-wrap; word-break: break-all; border-radius: 8px; color: #e6edf3; margin-top: 10px; text-align: left; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>💻 SGDEV Mail Hybrid Automation Hub</h1>
+                <h1>💻 SGDEV Mail Automation Hub (Mailo Web-Bypass)</h1>
                 <p><strong>System Status:</strong> <span class="status-badge">{global_memory['status']}</span></p>
                 
-                <h3 style="color: #00ffcc; text-align: left;">🔄 SMTP Output Log:</h3>
+                <h3 style="color: #00ffcc; text-align: left;">🔄 Web Route Log:</h3>
                 <div class="error-box">{global_memory['smtp_error']}</div>
 
                 <p><strong>📧 Last Sender:</strong> <span style="color: #ff007f; font-weight: bold;">{global_memory['sender']}</span></p>
                 <div style="text-align: left;">
-                    <h3 style="color: #00ffcc;">📄 Received Message from Mailo:</h3>
+                    <h3 style="color: #00ffcc;">📄 Received Message:</h3>
                     <div class="body-box">{global_memory['body']}</div>
                 </div>
             </div>
