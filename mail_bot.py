@@ -24,7 +24,9 @@ app.add_middleware(
 EMAIL = "sgdev@netc.fr"
 PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
-SMTP_SERVER = "mail.mailo.com"
+
+# 🔥 ১০০০ IQ ট্রিক: মেলো-র ৩টি আলাদা আলাদা SMTP হোস্ট ট্রাই করা হবে ব্লক ভাঙার জন্য
+SMTP_SERVERS = ["mail.mailo.com", "smtp.mailo.com", "smtp.netc.fr"]
 
 global_memory = {
     "status": "Waiting for /run...",
@@ -36,9 +38,7 @@ global_memory = {
 
 def send_reply(to_email, original_subject):
     global global_memory
-    
-    # ১০০০ IQ ট্রিক: সকেটের ডিফল্ট টাইমআউট ৭ সেকেন্ড করে দেওয়া হলো যাতে কোড ঝুলে না থাকে
-    socket.setdefaulttimeout(7.0)
+    socket.setdefaulttimeout(6.0) # ফাস্ট রেসপন্স টাইমআউট
     
     msg = MIMEMultipart()
     safe_subject = str(original_subject if original_subject else "Your Mail").replace('\r', '').replace('\n', '').strip()
@@ -51,55 +51,44 @@ def send_reply(to_email, original_subject):
     body_text = "Hi! I received your mail via Mailo server. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)"
     msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
 
-    # মেথড ১: পোর্ট ৫৮৭ ট্রাই (STARTTLS)
-    try:
-        global_memory["smtp_error"] = "Trying Port 587 (STARTTLS)..."
-        print("Trying Port 587...")
-        with smtplib.SMTP(SMTP_SERVER, 587, timeout=7) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.ehlo()
-            smtp.login(EMAIL, PASSWORD)
-            smtp.sendmail(EMAIL, to_email, msg.as_string())
-        global_memory["smtp_error"] = "✅ Successfully sent via Port 587 STARTTLS!"
-        return True
-    except Exception as e1:
-        print(f"Port 587 failed: {e1}")
-        
-        # মেথড ২: পোর্ট ৪৬৫ ট্রাই (SSL)
+    # লুপ চালিয়ে সবকটি মেলো হোস্ট চেক করা হবে
+    for server in SMTP_SERVERS:
+        # প্রথমে চেষ্টা করবো সিকিউর SSL পোর্ট ৪৬৫
         try:
-            global_memory["smtp_error"] = f"Port 587 timed out. Now trying Port 465 (SSL)..."
-            print("Trying Port 465...")
-            with smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=7) as smtp:
+            print(f"Trying {server} via Port 465 SSL...")
+            global_memory["smtp_error"] = f"Trying {server} : 465..."
+            with smtplib.SMTP_SSL(server, 465, timeout=6) as smtp:
                 smtp.ehlo()
                 smtp.login(EMAIL, PASSWORD)
                 smtp.sendmail(EMAIL, to_email, msg.as_string())
-            global_memory["smtp_error"] = "✅ Successfully sent via Port 465 SSL!"
+            global_memory["smtp_error"] = f"✅ Success via {server} (Port 465)!"
             return True
-        except Exception as e2:
-            # মেথড ৩: পোর্ট ২৫২৫ ট্রাই (বিকল্প পোর্ট)
+        except Exception:
+            # ৪৬৫ ফেল করলে চেষ্টা করবো পোর্ট ৫৮৭
             try:
-                global_memory["smtp_error"] = f"Port 465 also failed. Trying Port 2525..."
-                print("Trying Port 2525...")
-                with smtplib.SMTP(SMTP_SERVER, 2525, timeout=7) as smtp:
+                print(f"Trying {server} via Port 587 STARTTLS...")
+                global_memory["smtp_error"] = f"Trying {server} : 587..."
+                with smtplib.SMTP(server, 587, timeout=6) as smtp:
                     smtp.ehlo()
                     smtp.starttls()
                     smtp.ehlo()
                     smtp.login(EMAIL, PASSWORD)
                     smtp.sendmail(EMAIL, to_email, msg.as_string())
-                global_memory["smtp_error"] = "✅ Successfully sent via Port 2525!"
+                global_memory["smtp_error"] = f"✅ Success via {server} (Port 587)!"
                 return True
-            except Exception as e3:
-                final_error = f"🚨 All Ports Timed Out/Blocked by Mailo! P587: {e1} | P465: {e2} | P2525: {e3}"
-                print(final_error)
-                global_memory["smtp_error"] = final_error
-                return False
+            except Exception:
+                continue # এই হোস্ট সম্পূর্ণ ফেল করলে পরের হোস্টে যাবে
+                
+    # সব হোস্ট ফেল করলে ফাইনাল মেসেজ
+    final_error = "🚨 Mailo has totally blocked Render IPs on all hosts/ports!"
+    global_memory["smtp_error"] = final_error
+    print(final_error)
+    return False
 
 @app.get("/run")
 def check_and_reply_inbox():
     global global_memory
     try:
-        # ইনবক্স রিড করার জন্য টাইমআউট বাড়ানো হলো
         socket.setdefaulttimeout(20.0)
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
         mail.login(EMAIL, PASSWORD)
@@ -134,7 +123,7 @@ def check_and_reply_inbox():
 
         cleaned_body = str(body).replace('\r\n', '\n').strip()
 
-        # মেলো দিয়ে রিপ্লাই পাঠানো স্টার্ট
+        # রিপ্লাই লুপ স্টার্ট
         send_reply(sender, subject)
 
         global_memory["status"] = "🔥 Script Processed 🔥"
@@ -165,7 +154,7 @@ async def view_dashboard():
         </head>
         <body>
             <div class="container">
-                <h1>💻 SGDEV Mail Automation Hub (Mailo Anti-Timeout)</h1>
+                <h1>💻 SGDEV Mail Automation Hub (Multi-Host Mode)</h1>
                 <p><strong>System Status:</strong> <span class="status-badge">{global_memory['status']}</span></p>
                 
                 <h3 style="color: #00ffcc; text-align: left;">🔄 SMTP / Connection Route Log:</h3>
