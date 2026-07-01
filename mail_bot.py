@@ -2,6 +2,7 @@ import imaplib
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import email
 import os
 from datetime import datetime
 from fastapi import FastAPI
@@ -25,7 +26,7 @@ IMAP_SERVER = "mail.mailo.com"
 SMTP_SERVER = "mail.mailo.com"
 
 global_memory = {
-    "status": "Waiting for cron-job to check inbox...",
+    "status": "Waiting for /run to fetch the latest Mailo email...",
     "sender": "N/A",
     "body": "N/A",
     "timestamp": "N/A"
@@ -33,10 +34,9 @@ global_memory = {
 
 def send_reply(to_email, original_subject):
     try:
-        # MIME structure তৈরি করা হচ্ছে যাতে মেইল ড্রপ না হয়
         msg = MIMEMultipart()
         
-        # হেডার ক্লিনআপ
+        # হেডার একদম নিখুঁতভাবে ক্লিন করা হচ্ছে যাতে মেলো সার্ভার ব্লক না করে
         safe_subject = original_subject if original_subject else "Your Mail"
         safe_subject = str(safe_subject).replace('\r', '').replace('\n', '').strip()
         to_email = str(to_email).replace('\r', '').replace('\n', '').strip()
@@ -45,18 +45,18 @@ def send_reply(to_email, original_subject):
         msg['From'] = f"SGDEV Automation <{EMAIL}>"
         msg['To'] = to_email
         
-        # বডি টেক্সট যোগ করা
-        body_text = "Hi! I received your mail. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)"
+        body_text = "Hi! I received your mail via Mailo server. I will get back to you shortly. \n\nBest,\nShubhomoy (SGDEV)"
         msg.attach(MIMEText(body_text, 'plain', 'utf-8'))
 
-        # 🔥 ১০০০ IQ SSL সিকিউর কানেকশন উইথ EHLO
-        print(f"Connecting to Mailo SMTP via Port 465 SSL...")
-        smtp = smtplib.SMTP_SSL(SMTP_SERVER, 465, timeout=20)
-        smtp.ehlo()
-        smtp.login(EMAIL, PASSWORD)
-        smtp.sendmail(EMAIL, to_email, msg.as_string())
-        smtp.quit()
-        print(f"✅ Reply successfully sent to {to_email}!")
+        # মেলো-র অফিশিয়াল সাবমিশন পোর্ট ৫৮৭ উইথ STARTTLS
+        print(f"Connecting to Mailo SMTP via Port 587 STARTTLS...")
+        with smtplib.SMTP(SMTP_SERVER, 587, timeout=25) as smtp:
+            smtp.ehlo()
+            smtp.starttls()  # কানেকশন সিকিউর করা হলো
+            smtp.ehlo()
+            smtp.login(EMAIL, PASSWORD)
+            smtp.sendmail(EMAIL, to_email, msg.as_string())
+        print(f"✅ Reply successfully sent to {to_email} via Mailo!")
     except Exception as e:
         print(f"🚨 Mailo SMTP Replying Failed: {e}")
 
@@ -64,53 +64,55 @@ def send_reply(to_email, original_subject):
 def check_and_reply_inbox():
     global global_memory
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
+        mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=25)
         mail.login(EMAIL, PASSWORD)
         mail.select("inbox")
 
-        _, messages = mail.search(None, 'UNSEEN')
+        # ১০০০ IQ ট্রিক: 'ALL' দিয়ে শেষ মেইলটা তুলবো যাতে ড্যাশবোর্ড ফাঁকা না থাকে
+        _, messages = mail.search(None, 'ALL')
         
         if not messages[0]:
             mail.logout()
-            return {"status": "Success", "message": "Checked inbox. No new emails."}
+            return {"status": "Success", "message": "Inbox is totally empty."}
 
-        for num in messages[0].split():
-            _, msg_data = mail.fetch(num, '(RFC822)')
-            raw_email = email.message_from_bytes(msg_data[0][1])
-            subject = raw_email.get('Subject', 'No Subject')
-            sender = raw_email.get("From", "Unknown Sender")
-            
-            # ক্লিন বাডি রিড লজিক
-            body = ""
-            if raw_email.is_multipart():
-                for part in raw_email.walk():
-                    if part.get_content_type() == "text/plain":
-                        payload = part.get_payload(decode=True)
-                        if payload:
-                            body = payload.decode('utf-8', errors='ignore')
-                            break
-            else:
-                payload = raw_email.get_payload(decode=True)
-                if payload:
-                    body = payload.decode('utf-8', errors='ignore')
+        # একদম শেষ মেইলটার আইডি নেওয়া হচ্ছে
+        mail_ids = messages[0].split()
+        latest_mail_id = mail_ids[-1] 
 
-            body = str(body) if body is not None else ""
-            cleaned_body = body.replace('\r\n', '\n').strip()
+        _, msg_data = mail.fetch(latest_mail_id, '(RFC822)')
+        raw_email = email.message_from_bytes(msg_data[0][1])
+        subject = raw_email.get('Subject', 'No Subject')
+        sender = raw_email.get("From", "Unknown Sender")
+        
+        # বডি রিড করার লজিক
+        body = ""
+        if raw_email.is_multipart():
+            for part in raw_email.walk():
+                if part.get_content_type() == "text/plain":
+                    payload = part.get_payload(decode=True)
+                    if payload:
+                        body = payload.decode('utf-8', errors='ignore')
+                        break
+        else:
+            payload = raw_email.get_payload(decode=True)
+            if payload:
+                body = payload.decode('utf-8', errors='ignore')
 
-            # রিপ্লাই ফাংশন ট্রিগার
-            send_reply(sender, subject)
-            
-            mail.store(num, '+FLAGS', '\\Seen')
+        body = str(body) if body is not None else ""
+        cleaned_body = body.replace('\r\n', '\n').strip()
 
-            global_memory = {
-                "status": "🔥 New Mail Processed & Replied! 🔥",
-                "sender": sender,
-                "body": cleaned_body if cleaned_body else "(No text content found)",
-                "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-            }
+        # অটো-রিপ্লাই পাঠানো হচ্ছে সরাসরি
+        send_reply(sender, subject)
+
+        global_memory = {
+            "status": "🔥 Mailo Automation Active & Replied! 🔥",
+            "sender": sender,
+            "body": cleaned_body if cleaned_body else "(No text content found)",
+            "timestamp": datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+        }
         
         mail.logout()
-        return {"status": "Success", "message": "Emails processed!"}
+        return {"status": "Success", "message": f"Latest email from {sender} processed!"}
 
     except Exception as e:
         return {"status": "Error", "detail": str(e)}
@@ -133,7 +135,7 @@ async def view_dashboard():
         </head>
         <body>
             <div class="container">
-                <h1>💻 SGDEV Mail Automation Hub</h1>
+                <h1>💻 SGDEV Mail Automation Hub (Mailo Mode)</h1>
                 <p><strong>System Status:</strong> <span class="status-badge">{global_memory['status']}</span></p>
                 <p class="meta"><strong>🕒 Last Updated:</strong> {global_memory['timestamp']}</p>
                 <p><strong>📧 Last Sender:</strong> <span class="highlight">{global_memory['sender']}</span></p>
