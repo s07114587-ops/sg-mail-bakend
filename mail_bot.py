@@ -9,8 +9,9 @@ from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware 
 import uvicorn
 
-app = FastAPI(title="💻 SGDEV Resend API Engine 💻")
+app = FastAPI(title="💻 SGDEV Brevo Global Engine 💻")
 
+# CORS পলিসি ওপেন রাখা হলো যাতে রেন্ডার সার্ভার ফ্রিলি কাজ করতে পারে
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,12 +20,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 📧 ক্রেডেনশিয়ালস
+# 📧 মেলো এবং ব্রেভো ক্রেডেনশিয়ালস (Render Environment থেকে রিড হবে)
 EMAIL = "sgdev@netc.fr"
-MAILO_PASSWORD = os.getenv('MAILO_PASSWORD') # মেলো অ্যাপ পাসওয়ার্ড এখানে থাকবে
+MAILO_PASSWORD = os.getenv('MAILO_PASSWORD') 
 IMAP_SERVER = "mail.mailo.com"
-RESEND_API_KEY = os.getenv('RESEND_API_KEY')
+BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 
+# লাইভ ট্র্যাকিং মেমোরি
 global_memory = {
     "status": "🟢 System Idle. Waiting for Cron Job...",
     "sender": "No Mail Checked Yet",
@@ -33,46 +35,53 @@ global_memory = {
     "reply_status": "No reply triggered yet."
 }
 
-def send_resend_api_reply(to_email, original_subject):
+def send_brevo_api_reply(to_email, original_subject):
     global global_memory
-    if not RESEND_API_KEY:
-        global_memory["reply_status"] = "🚨 Error: RESEND_API_KEY is missing in Render!"
+    if not BREVO_API_KEY:
+        global_memory["reply_status"] = "🚨 Error: BREVO_API_KEY is missing in Render Environment!"
         return False
     try:
+        # মেইল ফিল্ড ক্লিন করা
         clean_to = str(to_email).replace('\r', '').replace('\n', '').strip()
         clean_subject = str(original_subject if original_subject else "Mail").replace('\r', '').replace('\n', '').strip()
-        body_text = f"Hi!\n\nI successfully received your mail regarding '{clean_subject}'. This is an automatic secure reply via SGDEV Resend API.\n\nBest Regards,\nSubrata Ghosh (SGDEV)"
+        
+        # অটো-রিপ্লাই মেসেজ বডি
+        body_text = f"Hi!\n\nI successfully received your mail regarding '{clean_subject}'. This is an automatic secure reply via SGDEV Brevo Global Engine.\n\nBest Regards,\nSubrata Ghosh (SGDEV)"
 
-        # 🚀 রেসেন্ড এপিআই (যা রেন্ডার কখনো ব্লক করতে পারবে না)
-        url = "https://api.resend.com/emails"
+        # 🚀 ব্রেভো গ্লোবাল এপিআই এন্ডপয়েন্ট (যা সারা বিশ্বের জন্য ডোমেইন ছাড়া কাজ করে)
+        url = "https://api.brevo.com/v3/smtp/email"
         headers = {
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type": "application/json"
+            "api-key": BREVO_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
+        
         payload = {
-            "from": "SGDEV Bot <onboarding@resend.dev>", 
-            "to": [clean_to],
+            "sender": {"name": "SGDEV Bot", "email": "sgdev@netc.fr"}, # ব্রেভোতে তোর ভেরিফাইড প্রেরক মেইল
+            "to": [{"email": clean_to}],
             "subject": f"Re: {clean_subject}",
-            "text": body_text
+            "textContent": body_text
         }
 
+        # এপিআই পোস্ট রিকোয়েস্ট
         response = requests.post(url, json=payload, headers=headers, timeout=15)
         
-        if response.status_code in [200, 201]:
-            global_memory["reply_status"] = f"✅ SUCCESS! API delivered mail to {clean_to}!"
+        if response.status_code in [200, 201, 202]:
+            global_memory["reply_status"] = f"✅ SUCCESS! Brevo delivered mail to {clean_to}!"
             return True
         else:
-            global_memory["reply_status"] = f"⚠️ Resend API Rejected: {response.text}"
+            global_memory["reply_status"] = f"⚠️ Brevo API Rejected: {response.text}"
             return False
 
     except Exception as e:
-        global_memory["reply_status"] = f"🚨 API Gateway Error: {str(e)}"
+        global_memory["reply_status"] = f"🚨 Brevo Gateway Error: {str(e)}"
         return False
 
 @app.get("/run")
 def check_and_reply_cron():
     global global_memory
     try:
+        # মেলো আইম্যাপ সার্ভারে লগইন
         mail = imaplib.IMAP4_SSL(IMAP_SERVER, timeout=20)
         mail.login(EMAIL, MAILO_PASSWORD)
         mail.select("inbox")
@@ -94,13 +103,14 @@ def check_and_reply_cron():
         subject = raw_email.get('Subject', 'No Subject')
         sender = raw_email.get("From", "Unknown Sender")
 
+        # সেন্ডারের মেইল আইডি ক্লিন করা
         email_finder = re.search(r'[\w\.-]+@[\w\.-]+', sender)
         clean_sender = email_finder.group(0) if email_finder else sender
 
-        # এপিআই মেথড ফায়ার
-        send_resend_api_reply(clean_sender, subject)
+        # ব্রেভো গ্লোবাল এপিআই দিয়ে অটো-রিপ্লাই ফায়ার করা
+        send_brevo_api_reply(clean_sender, subject)
 
-        global_memory["status"] = "🚀 SGDEV API System Synchronized!"
+        global_memory["status"] = "🚀 SGDEV Brevo System Synchronized!"
         global_memory["sender"] = clean_sender
         global_memory["subject"] = subject
         global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
@@ -117,22 +127,22 @@ async def view_public_logs():
     html_content = f"""
     <html>
         <head>
-            <title>SGDEV API Tracker</title>
+            <title>SGDEV Brevo Tracker</title>
             <style>
                 body {{ font-family: 'Segoe UI', sans-serif; background-color: #0a0a12; color: #c9d1d9; padding: 40px; text-align: center; }}
                 .container {{ max-width: 750px; margin: auto; background: rgba(20, 20, 35, 0.9); padding: 30px; border-radius: 12px; border: 2px solid #00ffcc; box-shadow: 0 0 20px rgba(0, 255, 204, 0.2); }}
-                h1 {{ color: #ff007f; text-shadow: 0 0 10px #ff007f; margin-top: 0; }}
+                h1 {{ color: #00ffcc; text-shadow: 0 0 10px #00ffcc; margin-top: 0; }}
                 .status-box {{ background: #16162a; border-left: 5px solid #00ffcc; padding: 15px; border-radius: 4px; text-align: left; font-family: monospace; font-size: 1.1em; margin: 20px 0; }}
                 .reply-box {{ background: #1b2a1c; border: 1px solid #00ffcc; padding: 12px; border-radius: 4px; color: #99ffbc; text-align: left; font-family: monospace; margin: 15px 0; }}
                 .log-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; font-family: monospace; text-align: left; }}
                 .log-table th, .log-table td {{ padding: 12px; border-bottom: 1px solid #222; }}
-                .log-table th {{ color: #00ffcc; border-bottom: 2px solid #00ffcc; }}
+                .log-table th {{ color: #ff007f; border-bottom: 2px solid #ff007f; }}
                 .highlight {{ color: #ff007f; font-weight: bold; }}
             </style>
         </head>
         <body>
             <div class="container">
-                <h1>💻 SGDEV API Mail Gateway</h1>
+                <h1>💻 SGDEV Global Mail Gateway (Brevo Lifetime API)</h1>
                 <div class="status-box"><strong>SYSTEM LOG:</strong> {global_memory['status']}</div>
                 <div class="reply-box"><strong>📩 AUTOMATION OUTPUT:</strong> {global_memory['reply_status']}</div>
                 <table class="log-table">
