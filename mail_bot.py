@@ -92,20 +92,26 @@ def check_and_reply_cron():
         mail.login(EMAIL, MAILO_PASSWORD)
         mail.select("inbox")
 
+        # ১. ইনবক্সে শুধু আনরেড মেইল খোঁজা
         _, messages = mail.search(None, 'UNREAD')
         
-        if not messages[0] or messages[0].strip() == b'':
+        # 🎯 মেইন ফিক্স: যদি কোনো মেইল আইডি না পাওয়া যায়, তবে কোনো FETCH হবে না
+        if not messages or not messages[0] or messages[0].strip() == b'':
             mail.logout()
             global_memory["status"] = "🟢 Checked: No New Unread Mails."
             global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-            return {"status": "Success", "message": "No new unread mails."}
+            return {"status": "Success", "message": "Inbox is completely clean. No new unread mails."}
 
         mail_ids = messages[0].split()
+        
+        # আরেকটি ব্যাকআপ সিকিউরিটি চেক যদি লিস্ট খালি থাকে
         if len(mail_ids) == 0:
             mail.logout()
             global_memory["status"] = "🟢 Checked: Zero Unread Mails."
+            global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
             return {"status": "Success", "message": "Inbox clear."}
 
+        # এখন লিস্টে মেইল থাকা গ্যারান্টিড, তাই FETCH সেফলি কাজ করবে
         latest_mail_id = mail_ids[-1] 
 
         _, msg_data = mail.fetch(latest_mail_id, '(RFC822)')
@@ -117,8 +123,10 @@ def check_and_reply_cron():
         email_finder = re.search(r'[\w\.-]+@[\w\.-]+', sender)
         clean_sender = email_finder.group(0) if email_finder else sender
 
+        # ব্রেভো দিয়ে অটো-রিপ্লাই ফায়ার
         reply_success = send_brevo_api_reply(clean_sender, subject)
 
+        # রিপ্লাই সফল হলে মেইলটাকে সাথে সাথে 'Read' করে দেওয়া
         if reply_success:
             mail.store(latest_mail_id, '+FLAGS', '\\Seen')
 
