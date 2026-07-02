@@ -11,7 +11,6 @@ import uvicorn
 
 app = FastAPI(title="💻 SGDEV Brevo Global Engine 💻")
 
-# CORS পলিসি ওপেন রাখা হলো
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,13 +19,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 📧 মেলো এবং ব্রেভো ক্রেডেনশিয়ালস
 EMAIL = "sgdev@netc.fr"
 MAILO_PASSWORD = os.getenv('MAILO_PASSWORD') 
 IMAP_SERVER = "mail.mailo.com"
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 
-# লাইভ ট্র্যাকিং মেমোরি
 global_memory = {
     "status": "🟢 System Idle. Waiting for Cron Job...",
     "sender": "No Mail Checked Yet",
@@ -44,7 +41,6 @@ def send_brevo_api_reply(to_email, original_subject):
         clean_to = str(to_email).replace('\r', '').replace('\n', '').strip()
         clean_subject = str(original_subject if original_subject else "Mail").replace('\r', '').replace('\n', '').strip()
         
-        # 🎯 নাম ছাড়া তোর ব্র্যান্ডের একদম পারফেক্ট অটো-রিপ্লাই বডি
         body_text = (
             f"Hi!\n\n"
             f"We received your mail regarding '{clean_subject}'.\n"
