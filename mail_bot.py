@@ -1,4 +1,4 @@
-# নতুন কাস্টমাইজড অটো-রিপ্লাই মেসেজ বডি (সব প্রোফাইল লিংক সহ)
+# 🎯 নাম ছাড়া একদম ক্লিন এবং প্রফেশনাল অটো-রিপ্লাই মেসেজ বডি
         body_text = (
             f"Hi!\n\n"
             f"We received your mail regarding '{clean_subject}'.\n"
@@ -12,5 +12,5 @@
             f"💻 Dev.to: https://dev.to/sgdev_sg_dev\n"
             f"🤖 Reddit: https://www.reddit.com/user/sgdev111\n\n"
             f"Best Regards,\n"
-            f"Subrata Ghosh (SGDEV)"
+            f"SGDEV Team"
         )
