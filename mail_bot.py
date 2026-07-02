@@ -25,7 +25,7 @@ IMAP_SERVER = "mail.mailo.com"
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 
 global_memory = {
-    "status": "🟢 System Idle. Waiting for Cron Job...",
+    "status": "🟢 System Idle. Waiting for New Mails...",
     "sender": "No Mail Checked Yet",
     "subject": "N/A",
     "timestamp": "N/A",
@@ -92,13 +92,14 @@ def check_and_reply_cron():
         mail.login(EMAIL, MAILO_PASSWORD)
         mail.select("inbox")
 
-        _, messages = mail.search(None, 'ALL')
+        # 🎯 পরিবর্তন ১: এখন মেইল সার্চ করবে শুধু 'UNREAD' (নতুন অপঠিত) মেইলগুলো
+        _, messages = mail.search(None, 'UNREAD')
         
         if not messages[0]:
             mail.logout()
-            global_memory["status"] = "🟢 Checked: Inbox Empty."
+            global_memory["status"] = "🟢 Checked: No New Unread Mails."
             global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-            return {"status": "Success", "message": "Inbox is empty."}
+            return {"status": "Success", "message": "No new unread mails."}
 
         mail_ids = messages[0].split()
         latest_mail_id = mail_ids[-1] 
@@ -112,7 +113,12 @@ def check_and_reply_cron():
         email_finder = re.search(r'[\w\.-]+@[\w\.-]+', sender)
         clean_sender = email_finder.group(0) if email_finder else sender
 
-        send_brevo_api_reply(clean_sender, subject)
+        # ব্রেভো দিয়ে রিপ্লাই পাঠানো
+        reply_success = send_brevo_api_reply(clean_sender, subject)
+
+        # 🎯 পরিবর্তন ২: রিপ্লাই সফল হলে মেলো ইনবক্সে ওই মেইলটাকে 'Read' (Seen) মার্ক করে দেওয়া হবে
+        if reply_success:
+            mail.store(latest_mail_id, '+FLAGS', '\\Seen')
 
         global_memory["status"] = "🚀 SGDEV Brevo System Synchronized!"
         global_memory["sender"] = clean_sender
