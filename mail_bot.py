@@ -24,12 +24,14 @@ MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 
+# লাইভ ট্র্যাকিং মেমোরি (লাস্ট প্রসেসড মেইল আইডি মনে রাখার জন্য)
 global_memory = {
     "status": "🟢 System Idle. Waiting for New Mails...",
     "sender": "No Mail Checked Yet",
     "subject": "N/A",
     "timestamp": "N/A",
-    "reply_status": "No reply triggered yet."
+    "reply_status": "No reply triggered yet.",
+    "last_processed_msg_id": ""  # এখানে ইউনিক আইডি সেভ থাকবে
 }
 
 def send_brevo_api_reply(to_email, original_subject):
@@ -92,52 +94,52 @@ def check_and_reply_cron():
         mail.login(EMAIL, MAILO_PASSWORD)
         mail.select("inbox")
 
-        # 🎯 সুপার ফিক্স: 'UNREAD' মেল সার্চ করা
-        status, messages = mail.search(None, 'UNREAD')
+        # 🎯 পরিবর্তন ১: আমরা সব মেইল খুঁজবো, আনরেডের ঝামেলা শেষ!
+        status, messages = mail.search(None, 'ALL')
         
-        # যদি মেলো সার্ভার কোনো কারণে রেসপন্স না দেয় বা খালি রাখে
         if status != 'OK' or not messages or not messages[0].strip():
             mail.logout()
-            global_memory["status"] = "🟢 Checked: No New Unread Mails."
+            global_memory["status"] = "🟢 Checked: Inbox Empty."
             global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
             return {"status": "Success", "message": "Inbox clear."}
 
         mail_ids = messages[0].split()
         if len(mail_ids) == 0:
             mail.logout()
-            global_memory["status"] = "🟢 Checked: Zero Unread Mails."
-            global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-            return {"status": "Success", "message": "No new mails."}
+            global_memory["status"] = "🟢 Checked: Zero Mails."
+            return {"status": "Success"}
 
         latest_mail_id = mail_ids[-1] 
 
-        # 🎯 FETCH এরর সেফটি লক: আইডি ভ্যালিড কি না চেক করা
-        if not latest_mail_id.isdigit():
-            mail.logout()
-            global_memory["status"] = "⚠️ Invalid Mail ID detected. Skipped."
-            return {"status": "Skipped", "message": "Invalid ID"}
-
         fetch_status, msg_data = mail.fetch(latest_mail_id, '(RFC822)')
-        
         if fetch_status != 'OK' or not msg_data or not msg_data[0]:
             mail.logout()
-            global_memory["status"] = "🟢 Inbox Synced (No fetchable mail)."
-            return {"status": "Success"}
+            return {"status": "Error", "message": "Fetch failed"}
 
         raw_email = email.message_from_bytes(msg_data[0][1])
         
+        # 🎯 পরিবর্তন ২: মেইলের ইউনিক মেসেজ আইডি নেওয়া হচ্ছে
+        msg_id = raw_email.get('Message-ID', str(latest_mail_id))
+
+        # 🎯 পরিবর্তন ৩: যদি এই মেইলটা অলরেডি আগের ক্রনজবে প্রসেস হয়ে থাকে, তবে স্কিপ করো!
+        if global_memory["last_processed_msg_id"] == msg_id:
+            mail.logout()
+            global_memory["status"] = "🟢 Checked: No New Mail Received (Skipped Old)."
+            global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+            return {"status": "Success", "message": "Already replied to this mail. Skipping."}
+
         subject = raw_email.get('Subject', 'No Subject')
         sender = raw_email.get("From", "Unknown Sender")
 
         email_finder = re.search(r'[\w\.-]+@[\w\.-]+', sender)
         clean_sender = email_finder.group(0) if email_finder else sender
 
-        # অটো-রিপ্লাই ফায়ার
+        # ব্রেভো দিয়ে রিপ্লাই পাঠানো
         reply_success = send_brevo_api_reply(clean_sender, subject)
 
-        # সফল হলে মেইলটাকে Read/Seen করে দেওয়া যাতে পরের ক্রনজব এটাকে আর না ধরে
         if reply_success:
-            mail.store(latest_mail_id, '+FLAGS', '\\Seen')
+            # 🎯 পরিবর্তন ৪: সফল হলে এই মেইলের আইডি মেমোরিতে লক করে দাও
+            global_memory["last_processed_msg_id"] = msg_id
 
         global_memory["status"] = "🚀 SGDEV Brevo System Synchronized!"
         global_memory["sender"] = clean_sender
