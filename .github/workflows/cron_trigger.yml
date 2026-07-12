@@ -1,0 +1,12 @@
+name: SGDEV Bot Trigger Cron
+on:
+  schedule:
+    - cron: '*/5 * * * *' # Now it run 5 munits letter
+
+jobs:
+  trigger_bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping SGDEV Server
+        run: |
+          curl -s https://sg-mail-bakend.onrender.com/run
