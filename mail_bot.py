@@ -134,7 +134,19 @@ def check_and_reply_cron():
         email_finder = re.search(r'[\w\.-]+@[\w\.-]+', sender)
         clean_sender = email_finder.group(0) if email_finder else sender
 
-        # ব্রেভো দিয়ে রিপ্লাই পাঠানো
+        # 🛑 নতুন ফিল্টার: DeviantArt বা সাপোর্ট মেইল হলে অটো-রিপ্লাই স্কিপ করো!
+        if "deviantart" in clean_sender.lower() or "support" in clean_sender.lower():
+            # মেইলটা প্রসেসড বলে মার্ক করে দিচ্ছি, যাতে বারবার লুপ না হয়
+            global_memory["last_processed_msg_id"] = msg_id
+            global_memory["status"] = f"🟢 Skipped Support/DeviantArt Mail from: {clean_sender}"
+            global_memory["sender"] = clean_sender
+            global_memory["subject"] = subject
+            global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
+            global_memory["reply_status"] = "🚫 Auto-reply skipped to prevent spam loop."
+            mail.logout()
+            return {"status": "Success", "message": "Support email detected. Skipped auto-reply to avoid loop."}
+
+        # সাধারণ মেইল হলে ব্রেভো দিয়ে রিপ্লাই পাঠানো
         reply_success = send_brevo_api_reply(clean_sender, subject)
 
         if reply_success:
