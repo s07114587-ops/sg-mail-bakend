@@ -24,6 +24,20 @@ MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 
+# 🎯 এই লিস্টে যেসব sender থাকবে, তাদের কখনোই অটো-রিপ্লাই পাঠানো হবে না।
+# চাইলে নিচে আরও keyword/domain অ্যাড করতে পারবে।
+SKIP_SENDER_KEYWORDS = [
+    "deviantart",
+    "support",
+    "no-reply",
+    "noreply",
+    "no_reply",
+    "donotreply",
+    "do-not-reply",
+    "mailer-daemon",
+    "postmaster",
+]
+
 # লাইভ ট্র্যাকিং মেমোরি (লাস্ট প্রসেসড মেইল আইডি মনে রাখার জন্য)
 global_memory = {
     "status": "🟢 System Idle. Waiting for New Mails...",
@@ -118,10 +132,10 @@ def check_and_reply_cron():
 
         raw_email = email.message_from_bytes(msg_data[0][1])
         
-        # 🎯 পরিবর্তন ২: মেইলের ইউনিক মেসেজ আইডি নেওয়া হচ্ছে
+        # 🎯 পরিবর্তন ২: মেইলের ইউনিক মেসেজ আইডি নেওয়া হচ্ছে
         msg_id = raw_email.get('Message-ID', str(latest_mail_id))
 
-        # 🎯 পরিবর্তন ৩: যদি এই মেইলটা অলরেডি আগের ক্রনজবে প্রসেস হয়ে থাকে, তবে স্কিপ করো!
+        # 🎯 পরিবর্তন ৩: যদি এই মেইলটা অলরেডি আগের ক্রনজবে প্রসেস হয়ে থাকে, তবে স্কিপ করো!
         if global_memory["last_processed_msg_id"] == msg_id:
             mail.logout()
             global_memory["status"] = "🟢 Checked: No New Mail Received (Skipped Old)."
@@ -134,19 +148,25 @@ def check_and_reply_cron():
         email_finder = re.search(r'[\w\.-]+@[\w\.-]+', sender)
         clean_sender = email_finder.group(0) if email_finder else sender
 
-        # 🛑 নতুন ফিল্টার: DeviantArt বা সাপোর্ট মেইল হলে অটো-রিপ্লাই স্কিপ করো!
-        if "deviantart" in clean_sender.lower() or "support" in clean_sender.lower():
-            # মেইলটা প্রসেসড বলে মার্ক করে দিচ্ছি, যাতে বারবার লুপ না হয়
+        # 🛑 ফিল্টার: DeviantArt / support / no-reply / postmaster ইত্যাদি হলে অটো-রিপ্লাই স্কিপ করো!
+        # (no-reply এ রিপ্লাই পাঠালে বাউন্স হয় বা কোনো লাভ হয় না, তাই বন্ধ করা হলো)
+        sender_lower = clean_sender.lower()
+        matched_skip_keyword = next(
+            (kw for kw in SKIP_SENDER_KEYWORDS if kw in sender_lower), None
+        )
+
+        if matched_skip_keyword:
+            # মেইলটা প্রসেসড বলে মার্ক করে দিচ্ছি, যাতে বারবার লুপ না হয়
             global_memory["last_processed_msg_id"] = msg_id
-            global_memory["status"] = f"🟢 Skipped Support/DeviantArt Mail from: {clean_sender}"
+            global_memory["status"] = f"🟢 Skipped '{matched_skip_keyword}' Mail from: {clean_sender}"
             global_memory["sender"] = clean_sender
             global_memory["subject"] = subject
             global_memory["timestamp"] = datetime.now().strftime("%Y-%m-%d %I:%M:%S %p")
-            global_memory["reply_status"] = "🚫 Auto-reply skipped to prevent spam loop."
+            global_memory["reply_status"] = f"🚫 Auto-reply skipped ('{matched_skip_keyword}' sender detected)."
             mail.logout()
-            return {"status": "Success", "message": "Support email detected. Skipped auto-reply to avoid loop."}
+            return {"status": "Success", "message": f"'{matched_skip_keyword}' sender detected. Skipped auto-reply."}
 
-        # সাধারণ মেইল হলে ব্রেভো দিয়ে রিপ্লাই পাঠানো
+        # সাধারণ মেইল হলে ব্রেভো দিয়ে রিপ্লাই পাঠানো
         reply_success = send_brevo_api_reply(clean_sender, subject)
 
         if reply_success:
