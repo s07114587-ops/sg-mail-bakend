@@ -64,7 +64,7 @@ def send_brevo_api_reply(to_email, original_subject):
             f"🇮🇳 Proudly from India 🇮🇳\n\n"
             f"--- Our Profiles & Main Web ---\n"
             f"🌐 Main Website: https://shubhomoy.dnc.su/\n"
-            f"📧 Contact Email: s07114587@gmail.com\n"
+            f"📧 Contact Email: sgdev@netc.fr\n"
             f"🎨 DeviantArt: https://www.deviantart.com/sgdev111\n"
             f"💼 Behance: https://www.behance.net/sgdev1\n"
             f"💻 Dev.to: https://dev.to/sgdev_sg_dev\n"
