@@ -24,18 +24,27 @@ MAILO_PASSWORD = os.getenv('MAILO_PASSWORD')
 IMAP_SERVER = "mail.mailo.com"
 BREVO_API_KEY = os.getenv('BREVO_API_KEY')
 
+# 🎯 প্রথমে এই REGEX দিয়ে চেক হবে: noreply, no-reply, noreply2, no_reply123 ইত্যাদি
+# যেকোনো সংখ্যা/সাফিক্স থাকলেও ধরবে, কারণ \d* এবং word boundary ইউজ করা হয়েছে
+NOREPLY_PATTERN = re.compile(r'no[-_]?reply\d*', re.IGNORECASE)
+
 # 🎯 এই লিস্টে যেসব sender থাকবে, তাদের কখনোই অটো-রিপ্লাই পাঠানো হবে না।
 # চাইলে নিচে আরও keyword/domain অ্যাড করতে পারবে।
 SKIP_SENDER_KEYWORDS = [
     "deviantart",
     "support",
-    "no-reply",
-    "noreply",
-    "no_reply",
     "donotreply",
     "do-not-reply",
     "mailer-daemon",
     "postmaster",
+    # 🎯 নতুন যোগ করা keywords/domains
+    "inc.eu.org",
+    "eu.org",
+    "cloudflare",
+    "brevo",
+    "clouddns",
+    "cloud-dns",
+    "dns.google",
 ]
 
 # লাইভ ট্র্যাকিং মেমোরি (লাস্ট প্রসেসড মেইল আইডি মনে রাখার জন্য)
@@ -100,6 +109,26 @@ def send_brevo_api_reply(to_email, original_subject):
         global_memory["reply_status"] = f"🚨 Brevo Gateway Error: {str(e)}"
         return False
 
+
+def get_skip_reason(sender_lower: str):
+    """
+    🎯 প্রথমে noreply-প্যাটার্ন চেক করে (noreply, no-reply, noreply2, no_reply9 ইত্যাদি)।
+    তারপর SKIP_SENDER_KEYWORDS লিস্টের বাকি কিওয়ার্ডগুলো চেক করে।
+    ম্যাচ পেলে reason string রিটার্ন করে, নাহলে None রিটার্ন করে।
+    """
+    # ধাপ ১: noreply প্যাটার্ন (সবচেয়ে হাই প্রায়োরিটি)
+    match = NOREPLY_PATTERN.search(sender_lower)
+    if match:
+        return match.group(0)
+
+    # ধাপ ২: বাকি কিওয়ার্ড লিস্ট
+    for kw in SKIP_SENDER_KEYWORDS:
+        if kw in sender_lower:
+            return kw
+
+    return None
+
+
 @app.get("/run")
 def check_and_reply_cron():
     global global_memory
@@ -108,7 +137,7 @@ def check_and_reply_cron():
         mail.login(EMAIL, MAILO_PASSWORD)
         mail.select("inbox")
 
-        # 🎯 পরিবর্তন ১: আমরা সব মেইল খুঁজবো, আনরেডের ঝামেলা শেষ!
+        # 🎯 আমরা সব মেইল খুঁজবো, আনরেডের ঝামেলা শেষ!
         status, messages = mail.search(None, 'ALL')
         
         if status != 'OK' or not messages or not messages[0].strip():
@@ -132,10 +161,10 @@ def check_and_reply_cron():
 
         raw_email = email.message_from_bytes(msg_data[0][1])
         
-        # 🎯 পরিবর্তন ২: মেইলের ইউনিক মেসেজ আইডি নেওয়া হচ্ছে
+        # 🎯 মেইলের ইউনিক মেসেজ আইডি নেওয়া হচ্ছে
         msg_id = raw_email.get('Message-ID', str(latest_mail_id))
 
-        # 🎯 পরিবর্তন ৩: যদি এই মেইলটা অলরেডি আগের ক্রনজবে প্রসেস হয়ে থাকে, তবে স্কিপ করো!
+        # 🎯 যদি এই মেইলটা অলরেডি আগের ক্রনজবে প্রসেস হয়ে থাকে, তবে স্কিপ করো!
         if global_memory["last_processed_msg_id"] == msg_id:
             mail.logout()
             global_memory["status"] = "🟢 Checked: No New Mail Received (Skipped Old)."
@@ -148,12 +177,9 @@ def check_and_reply_cron():
         email_finder = re.search(r'[\w\.-]+@[\w\.-]+', sender)
         clean_sender = email_finder.group(0) if email_finder else sender
 
-        # 🛑 ফিল্টার: DeviantArt / support / no-reply / postmaster ইত্যাদি হলে অটো-রিপ্লাই স্কিপ করো!
-        # (no-reply এ রিপ্লাই পাঠালে বাউন্স হয় বা কোনো লাভ হয় না, তাই বন্ধ করা হলো)
+        # 🛑 ফিল্টার: প্রথমে noreply-টাইপ চেক, তারপর বাকি কিওয়ার্ড লিস্ট
         sender_lower = clean_sender.lower()
-        matched_skip_keyword = next(
-            (kw for kw in SKIP_SENDER_KEYWORDS if kw in sender_lower), None
-        )
+        matched_skip_keyword = get_skip_reason(sender_lower)
 
         if matched_skip_keyword:
             # মেইলটা প্রসেসড বলে মার্ক করে দিচ্ছি, যাতে বারবার লুপ না হয়
@@ -170,7 +196,7 @@ def check_and_reply_cron():
         reply_success = send_brevo_api_reply(clean_sender, subject)
 
         if reply_success:
-            # 🎯 পরিবর্তন ৪: সফল হলে এই মেইলের আইডি মেমোরিতে লক করে দাও
+            # 🎯 সফল হলে এই মেইলের আইডি মেমোরিতে লক করে দাও
             global_memory["last_processed_msg_id"] = msg_id
 
         global_memory["status"] = "🚀 SGDEV Brevo System Synchronized!"
